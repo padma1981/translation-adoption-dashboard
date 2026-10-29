@@ -70,11 +70,14 @@ could not be linked, on a data quality page.
 - Random seed fixed so data is reproducible
 - Date range: 2026-04-01 to 2026-09-30
 - Tool rollout: phased by team, starting 2026-05-01
-- ~150 agents, 6 teams, 2 sites; ~20-25% native in at least one in-scope language
+- ~150 agents, 6 teams, 2 sites; native speakers are rare: ~5% of agents (7-8 of 150)
+  are native in an in-scope language, with at least one native per in-scope language
+  and at least one agent native in two languages
 - ~1,500 calls/day; language mix roughly English 80%, Spanish 12%,
   Portuguese 3%, Mandarin 2.5%, Vietnamese 2.5%
-- Routing: ~75% of in-scope language calls go to a native agent when one is
-  available; the rest overflow to non-native agents (this creates eligible calls)
+- Routing: only ~35% of in-scope language calls go to a native agent when one is
+  available; the rest overflow to non-native agents (this creates eligible calls),
+  so the large majority of non-English calls are eligible for the tool
 - Adoption ramps after each team's rollout: Spanish/Portuguese toward ~85%,
   Mandarin/Vietnamese toward ~65%; two teams lag at ~40%
 - Of eligible calls without the tool: ~70% interpreter line, ~30% no support
