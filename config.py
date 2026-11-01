@@ -76,17 +76,40 @@ TEAM_ROLLOUT_DATES = {
     "Summit": date(2026, 7, 15),
 }
 
+# --- Agent schedules -------------------------------------------------------
+# Each agent works 5 days a week with 2 consecutive days off. Weights favour
+# weekends off, which matches the lower weekend volume.
+DAYS_OFF_OPTIONS = {  # days-off pair -> share of agents
+    ("Sat", "Sun"): 0.45,
+    ("Sun", "Mon"): 0.15,
+    ("Fri", "Sat"): 0.15,
+    ("Mon", "Tue"): 0.10,
+    ("Tue", "Wed"): 0.05,
+    ("Wed", "Thu"): 0.05,
+    ("Thu", "Fri"): 0.05,
+}
+SHIFT_HOURS = 8                        # includes the lunch break
+SHIFT_START_RANGE = ("07:00", "11:00")  # staggered, in SHIFT_START_STEP_MIN steps
+SHIFT_START_STEP_MIN = 30
+LUNCH_MIN = 30
+LUNCH_OFFSET_RANGE_MIN = (210, 270)    # lunch starts this long after shift start
+
 # --- Call volume and routing -----------------------------------------------
-CALLS_PER_DAY = 1500
+CALLS_PER_DAY = 1500         # weekday volume
+WEEKEND_VOLUME_FACTOR = 0.4  # Saturday/Sunday volume = CALLS_PER_DAY * factor
+# Share of daily arrivals by hour of day (08:00-19:00). Morning and
+# early-afternoon peaks, quieter late afternoon. Must sum to 1.0.
+INTRADAY_ARRIVAL_WEIGHTS = {
+    8: 0.07, 9: 0.10, 10: 0.12, 11: 0.11, 12: 0.09, 13: 0.11,
+    14: 0.11, 15: 0.09, 16: 0.08, 17: 0.07, 18: 0.05,
+}
 QUEUES = ["Billing", "Technical Support", "Account Services", "Sales"]
 QUEUE_WEIGHTS = [0.35, 0.30, 0.25, 0.10]
-SHIFT_START_HOUR_RANGE = (8, 10)   # agent's first call starts in this window
-GAP_BETWEEN_CALLS_SEC = (30, 900)  # idle time between an agent's calls
-SHIFT_LENGTH_HOURS = 10           # gaps shrink so a busy day still fits
 
-# Share of in-scope language calls routed to a native agent when one is
-# available; the rest overflow to non-native agents and become eligible.
-NATIVE_ROUTING_RATE = 0.35
+# Routing (simulated in arrival order): an in-scope language call goes to a
+# free, on-shift agent native in that language (longest idle first). If none
+# frees up within NATIVE_WAIT_SEC it overflows to any free, on-shift agent.
+NATIVE_WAIT_SEC = 0
 
 # --- Adoption --------------------------------------------------------------
 # Steady-state tool adoption on eligible calls after rollout.
@@ -122,13 +145,15 @@ TALK_SEC_MEAN = {
     "no_support": 480,
 }
 TALK_SEC_SIGMA = 0.35
-HOLD_SEC_MEAN = {
+HOLD_SEC_MEAN = {            # exponential, added to any connect hold below
     "native": 30,
     "translation_tool": 45,
-    "interpreter_line": 120,  # connecting the interpreter
+    "interpreter_line": 90,
     "no_support": 90,
 }
-WRAP_SEC_RANGE = (30, 90)     # after-call work, counted in handle_sec only
+INTERPRETER_CONNECT_HOLD_SEC = 30  # minimum hold while the interpreter joins
+WRAP_SEC_RANGE = (30, 90)     # after-call work (inclusive), in handle_sec only;
+                              # the agent is not routable during wrap-up
 TRANSFER_RATE = {
     "native": 0.04,
     "translation_tool": 0.06,

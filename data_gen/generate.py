@@ -2,8 +2,9 @@
 
 Run from the repo root:  python -m data_gen.generate
 
-Writes dim_agent, agent_language_proficiency, fact_call,
-fact_translation_session and fact_interpreter_usage to config.RAW_DATA_DIR.
+Writes dim_agent, dim_team, agent_language_proficiency, fact_call,
+fact_translation_session and fact_interpreter_usage to config.RAW_DATA_DIR,
+then runs the data checks in data_gen/checks.py.
 All values are synthetic and reproducible from config.SEED.
 """
 
@@ -17,12 +18,25 @@ from faker import Faker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import config as cfg  # noqa: E402
+from data_gen import checks  # noqa: E402
 
-PATHS = ["native", "translation_tool", "interpreter_line", "no_support"]
+DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+CALL_COLS = ["call_id", "call_start_ts", "call_end_ts", "caller_language", "queue",
+             "agent_id", "routing_reason", "talk_sec", "hold_sec", "handle_sec",
+             "transferred", "disposition", "csat"]
 
 
 def _days(start: date, end: date) -> list[date]:
     return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+
+def hhmm_to_sec(s: str) -> int:
+    h, m = s.split(":")
+    return int(h) * 3600 + int(m) * 60
+
+
+def _sec_to_hhmm(x: int) -> str:
+    return f"{x // 3600:02d}:{x % 3600 // 60:02d}"
 
 
 def build_agents(rng: np.random.Generator, fake: Faker) -> pd.DataFrame:
@@ -39,7 +53,7 @@ def build_agents(rng: np.random.Generator, fake: Faker) -> pd.DataFrame:
     for i in late_hires:
         hire[i] = cfg.START_DATE + timedelta(days=int(rng.integers(10, range_days - 30)))
 
-    # Termination date is internal only (dim_agent exposes status).
+    # First day the agent no longer works (no calls or sessions on/after it).
     term = [None] * n
     candidates = np.setdiff1d(np.arange(n), late_hires)
     for i in rng.choice(candidates, int(n * cfg.TERMINATED_SHARE), replace=False):
@@ -63,9 +77,32 @@ def build_agents(rng: np.random.Generator, fake: Faker) -> pd.DataFrame:
         "hire_date": hire,
         "tool_enabled_date": enabled,
         "status": ["terminated" if x is not None else "active" for x in term],
-        "_term_date": term,
+        "termination_date": term,
         "_propensity": propensity,
     })
+
+
+def build_teams(agents: pd.DataFrame) -> pd.DataFrame:
+    """One row per team with its supervisor, site and tool rollout date."""
+    t = agents.groupby("team", as_index=False)[["supervisor", "site"]].first()
+    t["rollout_date"] = t["team"].map(cfg.TEAM_ROLLOUT_DATES)
+    return t.sort_values("rollout_date").reset_index(drop=True)
+
+
+def add_schedules(rng: np.random.Generator, agents: pd.DataFrame) -> pd.DataFrame:
+    """5-day week with 2 consecutive days off, staggered 8-hour shift, 30-min lunch."""
+    n = len(agents)
+    options = list(cfg.DAYS_OFF_OPTIONS)
+    pick = rng.choice(len(options), size=n, p=list(cfg.DAYS_OFF_OPTIONS.values()))
+    lo, hi = (hhmm_to_sec(s) for s in cfg.SHIFT_START_RANGE)
+    start = rng.choice(np.arange(lo, hi + 1, cfg.SHIFT_START_STEP_MIN * 60), size=n)
+    l_lo, l_hi = cfg.LUNCH_OFFSET_RANGE_MIN
+    lunch = start + rng.choice(np.arange(l_lo, l_hi + 1, 15), size=n) * 60
+    agents["days_off"] = [",".join(options[i]) for i in pick]
+    agents["shift_start"] = [_sec_to_hhmm(int(s)) for s in start]
+    agents["shift_end"] = [_sec_to_hhmm(int(s) + cfg.SHIFT_HOURS * 3600) for s in start]
+    agents["lunch_start"] = [_sec_to_hhmm(int(s)) for s in lunch]
+    return agents
 
 
 def build_proficiency(rng: np.random.Generator, agents: pd.DataFrame) -> pd.DataFrame:
@@ -100,106 +137,169 @@ def build_proficiency(rng: np.random.Generator, agents: pd.DataFrame) -> pd.Data
     return pd.DataFrame(rows, columns=["agent_id", "language", "proficiency_level"])
 
 
-def build_calls(rng: np.random.Generator, agents: pd.DataFrame,
-                prof: pd.DataFrame) -> pd.DataFrame:
-    """Calls with routing, eligibility-driven handling path, and durations."""
-    natives = prof[prof["proficiency_level"] == "native"]
-    native_set = set(zip(natives["agent_id"], natives["language"]))
-    agent_ids = agents["agent_id"].to_numpy()
-    langs = list(cfg.LANGUAGE_MIX)
-    lang_p = list(cfg.LANGUAGE_MIX.values())
-
+def build_arrivals(rng: np.random.Generator) -> pd.DataFrame:
+    """Call arrivals per day on the intraday curve, lower volume on weekends."""
+    hours = np.array(list(cfg.INTRADAY_ARRIVAL_WEIGHTS))
+    hour_p = list(cfg.INTRADAY_ARRIVAL_WEIGHTS.values())
+    langs, lang_p = list(cfg.LANGUAGE_MIX), list(cfg.LANGUAGE_MIX.values())
     frames = []
     for d in _days(cfg.START_DATE, cfg.END_DATE):
-        employed = (agents["hire_date"] <= d) & agents["_term_date"].map(
-            lambda x: x is None or d < x)
-        avail = agent_ids[employed.to_numpy()]
-        n = rng.poisson(cfg.CALLS_PER_DAY)
-        call_lang = rng.choice(langs, size=n, p=lang_p)
-        assigned = rng.choice(avail, size=n)
-        for lang in cfg.IN_SCOPE_LANGUAGES:
-            idx = np.flatnonzero(call_lang == lang)
-            nat = np.array([a for a in avail if (a, lang) in native_set])
-            non = np.array([a for a in avail if (a, lang) not in native_set])
-            to_native = rng.random(len(idx)) < cfg.NATIVE_ROUTING_RATE if len(nat) else \
-                np.zeros(len(idx), bool)
-            assigned[idx[to_native]] = rng.choice(nat, size=to_native.sum()) if len(nat) else []
-            assigned[idx[~to_native]] = rng.choice(non, size=(~to_native).sum())
-        frames.append(pd.DataFrame({"call_date": d, "caller_language": call_lang,
-                                    "agent_id": assigned}))
-    calls = pd.concat(frames, ignore_index=True)
-    n = len(calls)
-    calls["queue"] = rng.choice(cfg.QUEUES, size=n, p=cfg.QUEUE_WEIGHTS)
+        mean = cfg.CALLS_PER_DAY * (cfg.WEEKEND_VOLUME_FACTOR if d.weekday() >= 5 else 1)
+        n = rng.poisson(mean)
+        sec = np.sort(rng.choice(hours, size=n, p=hour_p) * 3600 + rng.integers(0, 3600, n))
+        frames.append(pd.DataFrame({"call_date": d, "arrival_sec": sec,
+                                    "caller_language": rng.choice(langs, size=n, p=lang_p)}))
+    return pd.concat(frames, ignore_index=True)
 
-    # Eligibility and handling path (generator-side truth; metrics re-derive it).
-    a = agents.set_index("agent_id")
-    calls = calls.join(a[["team", "tool_enabled_date", "_propensity"]], on="agent_id")
-    in_scope = calls["caller_language"].isin(cfg.IN_SCOPE_LANGUAGES).to_numpy()
-    is_native = np.array([(ag, lg) in native_set
-                          for ag, lg in zip(calls["agent_id"], calls["caller_language"])])
-    eligible = in_scope & ~is_native
-    enabled = calls["tool_enabled_date"].notna() & (
-        calls["call_date"] >= calls["tool_enabled_date"].fillna(date.max))
-    enabled = enabled.to_numpy()
 
-    days_on = np.array([(c - e).days if e is not None and c >= e else 0
-                        for c, e in zip(calls["call_date"], calls["tool_enabled_date"])])
-    target = calls["caller_language"].map(cfg.ADOPTION_TARGET).fillna(0).to_numpy()
-    team_factor = np.where(calls["team"].isin(cfg.LAGGING_TEAMS), cfg.LAGGING_TEAM_FACTOR, 1.0)
-    p_tool = np.clip(target * team_factor * calls["_propensity"].to_numpy()
-                     * (1 - np.exp(-days_on / cfg.RAMP_TAU_DAYS)), 0, 0.98)
+class _Floor:
+    """Agent availability for one day: who is on shift, at lunch, or busy."""
 
-    r = rng.random(n)
-    uses_tool = eligible & enabled & (r < p_tool)
-    interp = eligible & ~uses_tool & (rng.random(n) < cfg.INTERPRETER_SHARE_OF_NON_TOOL)
-    path = np.full(n, "native", dtype=object)
-    path[eligible] = "no_support"
-    path[interp] = "interpreter_line"
-    path[uses_tool] = "translation_tool"
-    optional_use = in_scope & is_native & enabled & (rng.random(n) < cfg.NATIVE_OPTIONAL_USE_RATE)
-    calls["_path"] = path
-    calls["_has_session"] = uses_tool | optional_use
+    def __init__(self, present, shift_start, shift_end, lunch_start, lunch_end):
+        self.present = present
+        self.shift_end = shift_end
+        self.lunch_start, self.lunch_end = lunch_start, lunch_end
+        # Time each agent is next free (call end + wrap-up); starts at shift start.
+        self.free_at = np.where(present, shift_start, np.inf).astype(float)
 
-    # Durations by path.
+    def pick(self, t, pool):
+        """Longest-idle free, on-shift agent in pool at time t, or None."""
+        ok = (pool & self.present & (self.free_at <= t) & (t < self.shift_end)
+              & ~((self.lunch_start <= t) & (t < self.lunch_end)))
+        if not ok.any():
+            return None
+        idle_since = np.where((self.lunch_end <= t) & (self.free_at < self.lunch_end),
+                              self.lunch_end, self.free_at)
+        return int(np.argmin(np.where(ok, idle_since, np.inf)))
+
+    def next_free(self, t, pool):
+        """Earliest time >= t that some agent in pool becomes routable (inf if none)."""
+        c = np.maximum(t, self.free_at)
+        c = np.where((self.lunch_start <= c) & (c < self.lunch_end), self.lunch_end, c)
+        c = np.where(pool & self.present & (c < self.shift_end), c, np.inf)
+        return float(c.min())
+
+
+def route_calls(rng: np.random.Generator, arrivals: pd.DataFrame, agents: pd.DataFrame,
+                native_set: set) -> pd.DataFrame:
+    """Route arrivals in time order and decide handling path and durations per call."""
+    n = len(arrivals)
+    z_talk = rng.standard_normal(n)
+    e_hold = rng.exponential(1.0, n)
+    wrap = rng.integers(cfg.WRAP_SEC_RANGE[0], cfg.WRAP_SEC_RANGE[1] + 1, n)
+    u_tool, u_interp, u_opt = rng.random(n), rng.random(n), rng.random(n)
+
+    ids = agents["agent_id"].to_numpy()
+    all_pool = np.ones(len(ids), bool)
+    native_mask = {lg: np.array([(a, lg) in native_set for a in ids])
+                   for lg in cfg.IN_SCOPE_LANGUAGES}
+    shift_start = agents["shift_start"].map(hhmm_to_sec).to_numpy()
+    shift_end = shift_start + cfg.SHIFT_HOURS * 3600
+    lunch_start = agents["lunch_start"].map(hhmm_to_sec).to_numpy()
+    lunch_end = lunch_start + cfg.LUNCH_MIN * 60
+    works = {wd: ~agents["days_off"].str.contains(DAY_NAMES[wd]).to_numpy() for wd in range(7)}
+    hire, term = agents["hire_date"].to_numpy(), agents["termination_date"].to_numpy()
+    enabled_date = agents["tool_enabled_date"].to_numpy()
+    agent_factor = (np.where(agents["team"].isin(cfg.LAGGING_TEAMS), cfg.LAGGING_TEAM_FACTOR, 1.0)
+                    * agents["_propensity"].to_numpy())
+
     s = cfg.TALK_SEC_SIGMA
-    talk_mean = pd.Series(path).map(cfg.TALK_SEC_MEAN).to_numpy()
-    calls["talk_sec"] = np.round(rng.lognormal(np.log(talk_mean) - s * s / 2, s)).astype(int)
-    hold_mean = pd.Series(path).map(cfg.HOLD_SEC_MEAN).to_numpy()
-    calls["hold_sec"] = np.round(rng.exponential(hold_mean)).astype(int)
-    wrap = rng.integers(*cfg.WRAP_SEC_RANGE, size=n)
-    calls["handle_sec"] = calls["talk_sec"] + calls["hold_sec"] + wrap
+    talk_mu = {p: np.log(m) - s * s / 2 for p, m in cfg.TALK_SEC_MEAN.items()}
+    wait = cfg.NATIVE_WAIT_SEC
 
-    calls["transferred"] = rng.random(n) < pd.Series(path).map(cfg.TRANSFER_RATE).to_numpy()
+    agent_idx = np.full(n, -1)
+    start_sec = np.zeros(n)
+    talk, hold = np.zeros(n, int), np.zeros(n, int)
+    path = np.full(n, "", dtype=object)
+    reason = np.full(n, None, dtype=object)
+    has_session = np.zeros(n, bool)
+
+    arr_sec = arrivals["arrival_sec"].to_numpy()
+    call_lang = arrivals["caller_language"].to_numpy()
+    for d, idx in arrivals.groupby("call_date").indices.items():
+        present = (works[d.weekday()] & (hire <= d)
+                   & np.array([x is None or d < x for x in term]))
+        floor = _Floor(present, shift_start, shift_end, lunch_start, lunch_end)
+        days_on = np.array([(d - e).days if e is not None and d >= e else -1
+                            for e in enabled_date])
+        p_base = np.where(days_on >= 0,
+                          agent_factor * (1 - np.exp(-np.maximum(days_on, 0) / cfg.RAMP_TAU_DAYS)), 0)
+
+        for i in idx:
+            t, lang = float(arr_sec[i]), call_lang[i]
+            in_scope = lang in native_mask
+            a = None
+            if in_scope:
+                pool = native_mask[lang]
+                a = floor.pick(t, pool)
+                if a is None and wait > 0:
+                    tn = floor.next_free(t, pool)
+                    if tn <= t + wait:
+                        t, a = tn, floor.pick(tn, pool)
+                    else:
+                        t += wait
+            if a is None:
+                a = floor.pick(t, all_pool)
+            while a is None:  # everyone busy: queue for the next free agent
+                t = floor.next_free(t, all_pool)
+                if t == np.inf:
+                    break
+                a = floor.pick(t, all_pool)
+            if a is None:
+                continue  # abandoned: nobody left on shift today
+
+            native_call = in_scope and native_mask[lang][a]
+            if not in_scope or native_call:
+                p = "native"
+            elif u_tool[i] < min(0.98, cfg.ADOPTION_TARGET[lang] * p_base[a]):
+                p = "translation_tool"
+            elif u_interp[i] < cfg.INTERPRETER_SHARE_OF_NON_TOOL:
+                p = "interpreter_line"
+            else:
+                p = "no_support"
+            if in_scope:
+                reason[i] = "native" if native_call else "overflow"
+            has_session[i] = p == "translation_tool" or (
+                native_call and days_on[a] >= 0 and u_opt[i] < cfg.NATIVE_OPTIONAL_USE_RATE)
+
+            talk[i] = round(np.exp(talk_mu[p] + s * z_talk[i]))
+            hold[i] = round(cfg.HOLD_SEC_MEAN[p] * e_hold[i])
+            if p == "interpreter_line":
+                hold[i] += cfg.INTERPRETER_CONNECT_HOLD_SEC
+            agent_idx[i], start_sec[i], path[i] = a, t, p
+            floor.free_at[a] = t + talk[i] + hold[i] + wrap[i]
+
+    routed = agent_idx >= 0
+    calls = arrivals.assign(
+        agent_id=np.where(routed, ids[np.maximum(agent_idx, 0)], None), start_sec=start_sec,
+        talk_sec=talk, hold_sec=hold, handle_sec=talk + hold + wrap, routing_reason=reason,
+        _path=path, _has_session=has_session)[routed].reset_index(drop=True)
+    calls = _finish_calls(rng, calls, agents)
+    calls.attrs["abandoned"] = int((~routed).sum())
+    return calls
+
+
+def _finish_calls(rng: np.random.Generator, calls: pd.DataFrame,
+                  agents: pd.DataFrame) -> pd.DataFrame:
+    """Timestamps, queue, transfers, disposition, CSAT and call ids."""
+    n = len(calls)
+    day = pd.to_datetime(calls["call_date"])
+    calls["call_start_ts"] = day + pd.to_timedelta(calls["start_sec"].round(), unit="s")
+    calls["call_end_ts"] = calls["call_start_ts"] + pd.to_timedelta(
+        calls["talk_sec"] + calls["hold_sec"], unit="s")
+    calls["queue"] = rng.choice(cfg.QUEUES, size=n, p=cfg.QUEUE_WEIGHTS)
+    path = calls["_path"]
+    calls["transferred"] = rng.random(n) < path.map(cfg.TRANSFER_RATE).to_numpy()
     calls["disposition"] = np.where(
         calls["transferred"], "Transferred",
         rng.choice(cfg.DISPOSITIONS, size=n, p=cfg.DISPOSITION_WEIGHTS))
-    csat_mean = pd.Series(path).map(cfg.CSAT_MEAN).to_numpy()
-    csat = np.clip(np.round(rng.normal(csat_mean, 0.9)), 1, 5)
+    csat = np.clip(np.round(rng.normal(path.map(cfg.CSAT_MEAN).to_numpy(), 0.9)), 1, 5)
     calls["csat"] = pd.array(np.where(rng.random(n) < cfg.CSAT_RESPONSE_RATE, csat, np.nan),
                              dtype="Int64")
 
-    return _schedule(rng, calls)
-
-
-def _schedule(rng: np.random.Generator, calls: pd.DataFrame) -> pd.DataFrame:
-    """Lay each agent's calls end to end within the day so calls never overlap."""
-    calls["_order"] = rng.random(len(calls))
-    calls = calls.sort_values(["agent_id", "call_date", "_order"]).reset_index(drop=True)
-    on_call = calls["talk_sec"] + calls["hold_sec"]
-    gap = pd.Series(rng.integers(*cfg.GAP_BETWEEN_CALLS_SEC, size=len(calls)))
-    g = calls.groupby(["agent_id", "call_date"], sort=False)
-    # Shrink gaps for busy agent-days so the shift fits in SHIFT_LENGTH_HOURS.
-    slack = (cfg.SHIFT_LENGTH_HOURS * 3600 - on_call.groupby(g.ngroup()).transform("sum")).clip(lower=0)
-    gap = (gap * np.minimum(1, slack / gap.groupby(g.ngroup()).transform("sum"))).round()
-    offset = (on_call + gap).groupby([calls["agent_id"], calls["call_date"]]).cumsum() - (on_call + gap)
-    lo, hi = cfg.SHIFT_START_HOUR_RANGE
-    shift = pd.Series(rng.integers(lo * 3600, hi * 3600, size=len(calls))).groupby(
-        g.ngroup()).transform("first")
-    day = pd.to_datetime(calls["call_date"])
-    calls["call_start_ts"] = day + pd.to_timedelta(shift + offset, unit="s")
-    calls["call_end_ts"] = calls["call_start_ts"] + pd.to_timedelta(on_call, unit="s")
-    calls = calls.sort_values("call_start_ts").reset_index(drop=True)
-    calls["call_id"] = [f"C{i + 1:07d}" for i in range(len(calls))]
+    calls = calls.join(agents.set_index("agent_id")[["team", "tool_enabled_date"]], on="agent_id")
+    calls = calls.sort_values(["call_start_ts", "agent_id"]).reset_index(drop=True)
+    calls["call_id"] = [f"C{i + 1:07d}" for i in range(n)]
     return calls
 
 
@@ -220,13 +320,14 @@ def build_sessions(rng: np.random.Generator, calls: pd.DataFrame) -> pd.DataFram
     })
     sessions.loc[rng.random(n) < cfg.SESSION_NULL_CALL_ID_SHARE, "call_id"] = None
 
-    # Orphans: sessions after an agent's last call of the day (practice/tests).
+    # Orphans: practice sessions after an agent's last call of the day. Any of
+    # the agent's working days, so some fall before their tool_enabled_date.
     n_orphan = int(n * cfg.ORPHAN_SESSION_SHARE)
     last = calls.groupby(["agent_id", calls["call_start_ts"].dt.date])["call_end_ts"].max()
     tool_agents = set(c["agent_id"])
     last = last[last.index.get_level_values(0).isin(tool_agents)]
     pick = last.sample(n_orphan, random_state=int(rng.integers(1e9)))
-    o_start = pick.to_numpy() + pd.to_timedelta(rng.uniform(600, 7200, n_orphan), unit="s").to_numpy()
+    o_start = pick.to_numpy() + pd.to_timedelta(rng.uniform(600, 3600, n_orphan), unit="s").to_numpy()
     orphans = pd.DataFrame({
         "agent_id": pick.index.get_level_values(0),
         "call_id": None,
@@ -235,7 +336,7 @@ def build_sessions(rng: np.random.Generator, calls: pd.DataFrame) -> pd.DataFram
         "source_language": rng.choice(cfg.IN_SCOPE_LANGUAGES, n_orphan),
     })
     sessions = pd.concat([sessions, orphans], ignore_index=True)
-    sessions = sessions.sort_values("session_start_ts").reset_index(drop=True)
+    sessions = sessions.sort_values(["session_start_ts", "agent_id"]).reset_index(drop=True)
 
     m = len(sessions)
     sessions.insert(0, "session_id", [f"S{i + 1:07d}" for i in range(m)])
@@ -250,7 +351,7 @@ def build_sessions(rng: np.random.Generator, calls: pd.DataFrame) -> pd.DataFram
 
 
 def build_interpreter(rng: np.random.Generator, calls: pd.DataFrame) -> pd.DataFrame:
-    """One vendor record per interpreter-line call."""
+    """One vendor record per interpreter-line call; billed minutes round up."""
     c = calls[calls["_path"] == "interpreter_line"]
     n = len(c)
     minutes = np.maximum(1, np.ceil((c["talk_sec"].to_numpy() - rng.uniform(30, 90, n)) / 60))
@@ -263,59 +364,48 @@ def build_interpreter(rng: np.random.Generator, calls: pd.DataFrame) -> pd.DataF
     })
 
 
-def main() -> None:
+def generate() -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Build all tables in memory. Returns (tables, calls with internal columns)."""
     rng = np.random.default_rng(cfg.SEED)
     Faker.seed(cfg.SEED)
     fake = Faker("en_US")
 
     agents = build_agents(rng, fake)
     prof = build_proficiency(rng, agents)
-    calls = build_calls(rng, agents, prof)
+    agents = add_schedules(rng, agents)
+    natives = prof[prof["proficiency_level"] == "native"]
+    calls = route_calls(rng, build_arrivals(rng), agents,
+                        set(zip(natives["agent_id"], natives["language"])))
     sessions = build_sessions(rng, calls)
     interp = build_interpreter(rng, calls)
 
-    out = Path(__file__).resolve().parents[1] / cfg.RAW_DATA_DIR
-    out.mkdir(parents=True, exist_ok=True)
-    call_cols = ["call_id", "call_start_ts", "call_end_ts", "caller_language", "queue",
-                 "agent_id", "talk_sec", "hold_sec", "handle_sec", "transferred",
-                 "disposition", "csat"]
     tables = {
-        "dim_agent": agents.drop(columns=["_term_date", "_propensity"]),
+        "dim_agent": agents.drop(columns=["_propensity"]),
+        "dim_team": build_teams(agents),
         "agent_language_proficiency": prof,
-        "fact_call": calls[call_cols],
+        "fact_call": calls[CALL_COLS],
         "fact_translation_session": sessions,
         "fact_interpreter_usage": interp,
     }
+    return tables, calls
+
+
+def main() -> None:
+    tables, calls = generate()
+    out = Path(__file__).resolve().parents[1] / cfg.RAW_DATA_DIR
+    out.mkdir(parents=True, exist_ok=True)
     for name, df in tables.items():
         df.to_parquet(out / f"{name}.parquet", index=False, compression="zstd")
         print(f"{name:28s} {len(df):>8,} rows")
+    print(f"Abandoned calls (no agent left on shift): {calls.attrs['abandoned']}")
 
-    _print_summary(agents, prof, calls, sessions)
-
-
-def _print_summary(agents, prof, calls, sessions) -> None:
-    """Quick sanity check of the generated assumptions."""
-    natives = prof[prof["proficiency_level"] == "native"]
-    n_native = natives["agent_id"].nunique()
-    print(f"\nNative agents: {n_native} of {len(agents)} ({n_native / len(agents):.1%})")
-    print(natives.groupby("language")["agent_id"].nunique().to_string())
-    multi = (natives.groupby("agent_id").size() > 1).sum()
-    print(f"Agents native in 2+ languages: {multi}")
-
-    in_scope = calls[calls["caller_language"].isin(cfg.IN_SCOPE_LANGUAGES)]
-    elig = in_scope[in_scope["_path"] != "native"]
-    print(f"\nIn-scope calls: {len(in_scope):,}; to native agent: "
-          f"{(in_scope['_path'] == 'native').mean():.1%}; eligible: {len(elig):,}")
-    print("Eligible handling path mix:")
-    print(elig["_path"].value_counts(normalize=True).round(3).to_string())
-    post = elig[elig["call_start_ts"].dt.date >= date(2026, 9, 1)]
-    print("\nSeptember adoption by language:")
-    print(post.groupby("caller_language")["_path"].apply(
-        lambda p: (p == "translation_tool").mean()).round(3).to_string())
-    print("September adoption by team:")
-    print(post.groupby("team")["_path"].apply(
-        lambda p: (p == "translation_tool").mean()).round(3).to_string())
-    print(f"\nSessions with null call_id: {sessions['call_id'].isna().sum():,}")
+    print("\nChecks:")
+    failed = 0
+    for name, ok, detail in checks.run_all(tables):
+        failed += not ok
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name}{': ' + detail if detail else ''}")
+    if failed:
+        sys.exit(f"{failed} check(s) failed")
 
 
 if __name__ == "__main__":
