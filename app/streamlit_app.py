@@ -1,7 +1,9 @@
 """Entry point and Overview page.
 
 Run with: streamlit run app/streamlit_app.py
-The top menu and filter bar are drawn here once, so filters carry across every page.
+Nothing but the sign-in screens is shown until a user is signed in (see auth.py).
+The top menu (only the pages the user's role allows) and the filter bar are drawn
+here once, so filters carry across every page.
 """
 
 from pathlib import Path
@@ -22,7 +24,8 @@ sys.path.insert(0, str(APP))   # so pages can `import ui`
 
 def code_version() -> str:
     """Hash of the shared modules, SQL views, config and data files."""
-    files = [APP / "ui.py", ROOT / "src" / "metrics.py", ROOT / "config.py",
+    files = [APP / "ui.py", APP / "auth.py", ROOT / "src" / "metrics.py", ROOT / "src" / "users.py",
+             ROOT / "config.py",
              *sorted((ROOT / "sql").glob("*.sql")), *sorted((ROOT / "data" / "raw").glob("*.parquet"))]
     h = hashlib.sha1()
     for path in files:
@@ -32,21 +35,26 @@ def code_version() -> str:
 
 
 def load_ui():
-    """Import ui (and src.metrics, config), reloading them when the code or data changed.
+    """Import ui and auth (and src.metrics, src.users, config), reloading them when the
+    code or data changed.
     A redeploy without a restart re-runs this script but can keep modules imported
     by the previous version, so they are reloaded here and ui.VERSION keys all caches."""
     version = code_version()
     import ui
+    import auth
     if getattr(ui, "VERSION", None) != version:   # older versions had no VERSION
         importlib.reload(ui.metrics.cfg)
         importlib.reload(ui.metrics)
+        importlib.reload(auth.users)
         ui = importlib.reload(ui)
+        auth = importlib.reload(auth)
         ui.VERSION = version
-    return ui
+    return ui, auth
 
 
-ui = load_ui()
+ui, auth = load_ui()
 metrics = ui.metrics
+users = auth.users
 
 
 ELIGIBILITY_HELP = (
@@ -60,9 +68,10 @@ REPEAT_HELP = ("Agents whose tool was enabled but who handled eligible calls wit
 
 SECTION_CSS = """
 <style>
-/* Card = the element container that holds each Plotly chart (not the whole section). */
+/* Cards: the donut's element container, and the Trends slider + chart container.
+   Both sit directly under their headings, so the card tops line up. */
 .st-key-adoption_section [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]),
-.st-key-repeat_section [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]) {
+.st-key-trends_card {
   background: #FFFFFF;
   border: 1px solid #94A3B8; border-radius: 14px;
   padding: 12px 12px 6px; box-sizing: border-box;
@@ -73,7 +82,7 @@ SECTION_CSS = """
 """
 DONUT_HEIGHT = 280
 MAX_AGENT_HEIGHT = 380
-TOP_AGENTS = 15
+TOP_AGENTS = 10
 MISSED_COLOR = "#F4A261"
 ADOPTED_COLOR = "#0F9D8A"      # teal
 NOT_ADOPTED_COLOR = "#F4A261"  # soft orange
@@ -135,7 +144,7 @@ def min_missed_slider(max_missed):
 
 def overview():
     """Adoption donut and agents repeatedly not using the tool, each with a CSV
-    download for the active filters."""
+    download for the active filters. Viewers see only the donut and its CSV."""
     f = ui.page_header("Translation Tool Adoption", centered=True, show_filters=False)
     split = ui.q(metrics.adoption_split, f)
     total = int(split["calls"].sum())
@@ -159,17 +168,19 @@ def overview():
         st.download_button("Download CSV", csv.to_csv(index=False), "adoption_split.csv",
                            "text/csv", icon=":material/download:")
 
+    if ui.role() == "viewer":   # no agent names or call-level exports for viewers
+        ui.footnote()
+        return
     with right, st.container(key="repeat_section"):
         all_missed = ui.q(metrics.repeat_non_users, f, min_missed=1)
-        heading, control = st.columns([0.45, 0.55], vertical_alignment="center")
-        heading.subheader("Trends", anchor=False, help=REPEAT_HELP)
+        st.subheader("Trends", anchor=False, help=REPEAT_HELP)
         if all_missed.empty:
             st.info("No tool-enabled agent missed the tool for these filters.", icon="🎉")
         else:
-            with control:
+            with st.container(key="trends_card"):
                 min_missed = min_missed_slider(int(all_missed["missed_calls"].max()))
-            agents = all_missed[all_missed["missed_calls"] >= min_missed].reset_index(drop=True)
-            ui.show(repeat_non_users_chart(agents.head(TOP_AGENTS)))
+                agents = all_missed[all_missed["missed_calls"] >= min_missed].reset_index(drop=True)
+                ui.show(repeat_non_users_chart(agents.head(TOP_AGENTS)))
             st.markdown(f"**{len(agents):,}** agents with **{int(agents['missed_calls'].sum()):,}** "
                         f"missed calls (at least {min_missed} each)")
             if len(agents) > TOP_AGENTS:
@@ -182,14 +193,47 @@ def overview():
     ui.footnote()
 
 
-pages = [
-    st.Page(overview, title="Overview", icon="📊", default=True),
-    st.Page("views/1_Agents_and_Teams.py", title="Agents & Teams", icon="👥"),
-    st.Page("views/2_Languages.py", title="Languages", icon="🗣️"),
-    st.Page("views/3_Operational_Impact.py", title="Operational Impact", icon="⏱️"),
-    st.Page("views/4_Cost.py", title="Cost", icon="💵"),
-    st.Page("views/5_Data_Quality.py", title="Data Quality", icon="🧪"),
-]
-page = st.navigation(pages, position="top")
-ui.render_filter_bar()
+# key: (page source, title, icon, url path). Keys match auth.PAGE_ACCESS.
+PAGE_SPECS = {
+    "overview": (overview, "Overview", "📊", "overview"),
+    "agents": ("views/1_Agents_and_Teams.py", "Agents & Teams", "👥", "Agents_and_Teams"),
+    "languages": ("views/2_Languages.py", "Languages", "🗣️", "Languages"),
+    "operational": ("views/3_Operational_Impact.py", "Operational Impact", "⏱️", "Operational_Impact"),
+    "cost": ("views/4_Cost.py", "Cost", "💵", "Cost"),
+    "data_quality": ("views/5_Data_Quality.py", "Data Quality", "🧪", "Data_Quality"),
+    "user_management": ("views/6_User_management.py", "User management", "🔐", "User_management"),
+}
+
+
+def pending_count():
+    try:
+        return len(users.list_users("pending"))
+    except Exception:   # store unavailable: show the page without a count
+        return 0
+
+
+def make_pages(visible, with_default=True, titles=None):
+    """All pages; those not in `visible` are registered hidden (not in the menu),
+    so their URL still resolves and can show the no-access message."""
+    titles = titles or {}
+    return {key: st.Page(src, title=titles.get(key, title), icon=icon, url_path=path,
+                         default=with_default and key == "overview",
+                         visibility="visible" if key in visible else "hidden")
+            for key, (src, title, icon, path) in PAGE_SPECS.items()}
+
+
+user = auth.gate(make_pages)
+allowed = auth.allowed_pages(user)
+titles = {}
+if "user_management" in allowed and (n := pending_count()):
+    titles["user_management"] = f"User management ({n})"
+pages = make_pages(allowed, titles=titles)
+page = st.navigation(list(pages.values()), position="top")
+auth.user_bar(user)
+key = next(k for k, p in pages.items() if p is page)
+if key not in allowed:
+    st.error(auth.DENIED, icon="🔒")
+    st.stop()
+if key != "user_management":
+    ui.render_filter_bar()
 page.run()

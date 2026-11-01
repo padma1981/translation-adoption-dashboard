@@ -1,7 +1,7 @@
 """Shared dashboard pieces: cached metric calls, global filter bar, page header,
 colors and number formatting. No metric logic lives here."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from pathlib import Path
 import sys
@@ -62,7 +62,8 @@ PRESETS = ["All time", "Last 7 days", "Last 30 days", "Last 90 days", "Month to 
 # Passed to every cached loader so a deploy never reuses results cached by an
 # older version.
 VERSION = None
-OPTION_KEYS = {"min_date", "max_date", "first_rollout_date", "teams", "supervisors", "languages"}
+OPTION_KEYS = {"min_date", "max_date", "first_rollout_date", "teams", "supervisors", "languages",
+               "team_supervisors"}
 
 
 @st.cache_resource(show_spinner=False)
@@ -81,8 +82,9 @@ def _cached(fn_name, filter_args, extra, version):
 
 
 def q(fn, f, **kwargs) -> pd.DataFrame:
-    """Call a src.metrics function with the active filters, cached."""
-    return _cached(fn.__name__, f.args(), tuple(sorted(kwargs.items())), VERSION)
+    """Call a src.metrics function with the active filters, limited to the signed-in
+    user's scope, cached. Every page gets its data through here."""
+    return _cached(fn.__name__, scoped(f).args(), tuple(sorted(kwargs.items())), VERSION)
 
 
 @st.cache_data(show_spinner=False)
@@ -106,6 +108,32 @@ def options() -> dict:
 def team_colors() -> dict:
     """Fixed color per team, so a filter never repaints the remaining teams."""
     return dict(zip(options()["teams"], TEAM_PALETTE))
+
+
+# --- Access scope ------------------------------------------------------------
+
+def role() -> str:
+    return st.session_state["user"]["role"]
+
+
+def user_scope():
+    """(team, supervisor) the signed-in user is limited to, or None for all teams.
+    Supervisors see only their own team; admins and viewers see all teams."""
+    user = st.session_state.get("user")
+    if not user or user.get("role") not in ("admin", "supervisor", "viewer"):
+        raise PermissionError("No signed-in user.")
+    if user["role"] != "supervisor":
+        return None
+    return user["team"], options()["team_supervisors"].get(user["team"])
+
+
+def scoped(f):
+    """Filters with the user's forced team applied, whatever session_state says."""
+    scope = user_scope()
+    if scope is None:
+        return f
+    team, supervisor = scope
+    return replace(f, teams=(team,), supervisors=(supervisor,) if supervisor else None)
 
 
 # --- Filters -----------------------------------------------------------------
@@ -230,6 +258,9 @@ def render_filter_bar():
     opts = options()
     ss = st.session_state
     _repair_state(opts)
+    scope = user_scope()
+    if scope:   # a supervisor's Team and Supervisor filters are locked to their team
+        ss.teams, ss.supervisors = [scope[0]], [s for s in scope[1:] if s]
 
     for key in FILTER_KEYS:
         ss[f"_w_{key}"] = ss[key]
@@ -247,9 +278,12 @@ def render_filter_bar():
         cols[2].date_input("End", **widget("end_date"), **kw)
         for col, key, label in ((cols[3], "teams", "Team"), (cols[4], "supervisors", "Supervisor"),
                                 (cols[5], "languages", "Language")):
-            with col.popover(_summary(label, ss[key], opts[key]), width="stretch"):
+            locked = bool(scope) and key in ("teams", "supervisors")
+            with col.popover(_summary(label, ss[key], opts[key]), width="stretch", disabled=locked,
+                             help="Locked to your team" if locked else None):
                 st.multiselect(label, opts[key], **widget(key), placeholder=f"Choose {key}")
-        cols[6].button("Reset", on_click=_reset, width="stretch", help="Reset all filters")
+        cols[6].button("Reset", on_click=_reset, width="stretch", help="Reset all filters",
+                       key="reset_filters")
 
     errors = []
     if ss.start_date > ss.end_date:
@@ -259,8 +293,8 @@ def render_filter_bar():
             errors.append(f"Select at least one {label}.")
 
     all_or = lambda key: None if set(ss[key]) == set(opts[key]) else tuple(sorted(ss[key]))  # noqa: E731
-    ss.filters = Filters(ss.start_date, ss.end_date, all_or("teams"), all_or("supervisors"),
-                         tuple(l for l in opts["languages"] if l in ss.languages))
+    ss.filters = scoped(Filters(ss.start_date, ss.end_date, all_or("teams"), all_or("supervisors"),
+                                tuple(l for l in opts["languages"] if l in ss.languages)))
     ss.filter_errors = errors
 
 

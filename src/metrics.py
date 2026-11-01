@@ -131,7 +131,8 @@ def _keys(grain=None, by=None):
 # --- Filter helpers (not filtered themselves) -------------------------------
 
 def filter_options(con=None) -> dict:
-    """Values for the filter bar: date bounds, first rollout date, teams, supervisors, languages."""
+    """Values for the filter bar: date bounds, first rollout date, teams, supervisors, languages,
+    and each team's supervisor (used to lock a supervisor's filters to their team)."""
     con = con or get_connection()
     lo, hi = con.execute("select min(call_date), max(call_date) from v_call_enriched").fetchone()
     return {
@@ -142,6 +143,7 @@ def filter_options(con=None) -> dict:
         "supervisors": [r[0] for r in con.execute(
             "select distinct supervisor from dim_team order by 1").fetchall()],
         "languages": list(cfg.IN_SCOPE_LANGUAGES),
+        "team_supervisors": dict(con.execute("select team, supervisor from dim_team").fetchall()),
     }
 
 

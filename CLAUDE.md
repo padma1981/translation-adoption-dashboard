@@ -191,11 +191,26 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
   - Credentials come from st.secrets (Google service account); never commit them
   - For local development, fall back to a local SQLite file at
     data/feedback/feedback.db when no Sheets secrets are configured
-- Owner view on the Feedback page, protected by a simple password from
-  st.secrets: table of all feedback, filters by type and page, average rating,
-  count by type, and CSV download
+- Owner view on the Feedback page, shown only to users with the admin role
+  (no separate owner password): table of all feedback, filters by type and
+  page, average rating, count by type, and CSV download. Store feedback in a
+  "feedback" worksheet of the same Google Sheet as the "users" worksheet
 - Keep data/feedback/ out of git (.gitignore)
 - Tests: saving and loading a feedback record, required-field validation
+
+### Sign-in, roles and users
+- Login page before anything else; app/auth.py draws the sign-in, request
+  access and change-password screens and the top-right user bar.
+- Users live in the "users" worksheet of the Google Sheet, accessed only
+  through src/users.py; local fallback is SQLite at data/users/users.db
+  (git-ignored, or $USERS_DB_PATH). Passwords are bcrypt hashes only.
+- Break-glass admin in st.secrets [auth.admin] (bcrypt hash from
+  scripts/hash_password.py); works even if the sheet is unavailable.
+  [auth] session_timeout_minutes ends sessions.
+- Roles: admin (everything + User management), supervisor (no Data Quality or
+  User management; all data limited to their team by ui.scoped() inside ui.q),
+  viewer (Overview adoption donut and its CSV only). Pages a role can't use
+  are hidden from the menu and show "You don't have access to this page."
 
 ## Deployment (Streamlit Community Cloud)
 The app must be hosted in the cloud so it can be demoed from any device.
@@ -205,7 +220,7 @@ The app must be hosted in the cloud so it can be demoed from any device.
 - Synthetic data: commit the generated Parquet files in data/raw/ (keep total
   size small, well under 50 MB) so the app starts fast and shows identical data
   every time. Load with @st.cache_data.
-- Secrets (Google Sheets credentials, owner password) go in
+- Secrets (Google Sheets credentials, [auth] block with the break-glass admin) go in
   .streamlit/secrets.toml locally (git-ignored) and in the app's Secrets
   settings on Community Cloud. Provide a secrets.toml.example with placeholders.
 - Make the app look good on a laptop and be usable on a tablet/phone

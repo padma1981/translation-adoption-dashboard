@@ -1,18 +1,18 @@
 """Smoke tests: every dashboard page renders without errors under default and narrowed filters."""
 
 from datetime import date
-from pathlib import Path
 
 import pytest
-from streamlit.testing.v1 import AppTest
 
-ENTRY = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
+from tests.conftest import new_app, signed_in
+
 PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py",
          "views/3_Operational_Impact.py", "views/4_Cost.py", "views/5_Data_Quality.py"]
 
 
 def run_page(page, **state):
-    at = AppTest.from_file(ENTRY, default_timeout=120)
+    """Run a page signed in as the break-glass admin, with extra session state."""
+    at = signed_in(new_app())
     at.run()
     for key, value in state.items():
         at.session_state[key] = value
@@ -22,13 +22,21 @@ def run_page(page, **state):
     return at
 
 
+def date_line(at):
+    return next(m.value for m in at.markdown if "2026" in m.value)
+
+
+def filter_line(at):
+    return next(c.value for c in at.caption if c.value.startswith("Teams:"))
+
+
 @pytest.mark.parametrize("page", PAGES)
 def test_page_renders_with_default_filters(page):
     at = run_page(page)
     assert not at.exception, at.exception
     assert not at.error
     if page:   # the Overview leaves the filter summary to the filter bar
-        assert "Apr 01, 2026 – Sep 30, 2026" in at.markdown[0].value
+        assert "Apr 01, 2026 – Sep 30, 2026" in date_line(at)
 
 
 @pytest.mark.parametrize("page", PAGES)
@@ -38,8 +46,8 @@ def test_page_renders_with_narrow_filters(page):
     assert not at.exception, at.exception
     assert not at.error
     if page:
-        assert "Sep 01, 2026 – Sep 30, 2026" in at.markdown[0].value
-        assert "Teams: Echo" in at.caption[0].value
+        assert "Sep 01, 2026 – Sep 30, 2026" in date_line(at)
+        assert "Teams: Echo" in filter_line(at)
 
 
 def test_start_after_end_shows_friendly_message():
@@ -55,7 +63,7 @@ def test_empty_selection_shows_friendly_message():
 
 
 def test_preset_sets_dates():
-    at = AppTest.from_file(ENTRY, default_timeout=120)
+    at = signed_in(new_app())
     at.run()
     at.selectbox(key="_w_preset").set_value("Last 7 days").run()
     assert at.session_state["start_date"] == date(2026, 9, 24)
@@ -72,7 +80,7 @@ def test_filters_survive_page_switches():
         assert not at.exception, at.exception
         assert at.session_state["teams"] == ["Echo"]
         assert at.session_state["supervisors"] == ["Cynthia Reyes"]
-        assert "Teams: Echo · Supervisors: Cynthia Reyes · Languages: Mandarin" in at.caption[0].value
+        assert "Teams: Echo · Supervisors: Cynthia Reyes · Languages: Mandarin" in filter_line(at)
 
 
 def test_overview_adoption_card():
@@ -96,7 +104,7 @@ def test_overview_repeat_non_users():
     assert (slider.value, slider.min, slider.max) == (3, 1, 93)   # max = most missed by one agent
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
     assert line.value == "**143** agents with **6,728** missed calls (at least 3 each)"
-    assert any(c.value == "Showing 15 of 143 agents; the CSV includes all." for c in at.caption)
+    assert any(c.value == "Showing 10 of 143 agents; the CSV includes all." for c in at.caption)
     at.slider(key="min_missed").set_value(1).run()
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
     assert line.value == "**145** agents with **6,730** missed calls (at least 1 each)"
@@ -146,14 +154,14 @@ def test_stale_cached_options_without_supervisors(monkeypatch):
         assert not at.error
     assert "supervisors" in ui._options(ui.VERSION)
     at = run_page(None)
-    at.button[-1].click().run()   # Reset
+    at.button(key="reset_filters").click().run()
     assert not at.exception, at.exception
 
 
 @pytest.mark.parametrize("page", PAGES)
 def test_session_with_preset_but_no_supervisors(page):
     """Session state from the version with a site filter: no supervisors, stale site keys."""
-    at = AppTest.from_file(ENTRY, default_timeout=120)
+    at = signed_in(new_app())
     old = dict(preset="Last 30 days", start_date=date(2026, 9, 1), end_date=date(2026, 9, 30),
                teams=["Echo"], languages=["Spanish"], sites=["North"], _w_sites=["North"])
     for key, value in old.items():
@@ -167,7 +175,7 @@ def test_session_with_preset_but_no_supervisors(page):
     assert at.session_state["teams"] == ["Echo"]
     assert len(at.session_state["supervisors"]) > 1
     if page:
-        assert "Teams: Echo · Supervisors: all · Languages: Spanish" in at.caption[0].value
+        assert "Teams: Echo · Supervisors: all · Languages: Spanish" in filter_line(at)
 
 
 def test_stale_metrics_module_is_reloaded():
