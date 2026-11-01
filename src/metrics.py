@@ -31,6 +31,7 @@ DIMENSIONS = {
     "agent": ["agent_id", "agent_name", "team", "supervisor", "site"],
 }
 ADOPTION_COUNTS = ["eligible_calls", "enabled_eligible_calls", "enabled_tool_calls",
+                   "enabled_interpreter_calls", "enabled_no_support_calls",
                    "not_enabled_eligible_calls", "not_enabled_interpreter_calls",
                    "supported_calls", "tool_calls", "interpreter_calls", "no_support_calls"]
 MONEY = {"interpreter_spend_usd", "cost_avoided_usd"}
@@ -180,6 +181,37 @@ def adoption_split(start_date=None, end_date=None, teams=None, supervisors=None,
     df = pd.DataFrame({"slice": ["Adopted the tool", "Did not adopt"],
                        "calls": [adopted, total - adopted]})
     df["share"] = _ratio(df["calls"], np.full(len(df), total))
+    return df
+
+
+def not_adopted_grain(start_date, end_date) -> str:
+    """'day' when the range is 31 days or less, otherwise 'week'."""
+    if start_date is None or end_date is None:
+        return "week"
+    return "day" if (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days + 1 <= 31 else "week"
+
+
+def not_adopted_trend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                      grain="auto", con=None) -> pd.DataFrame:
+    """Tool-enabled eligible calls that did not use the tool, per period, split into
+    interpreter line and no support, with the share not using the tool.
+    grain 'auto' = daily for ranges of 31 days or less, else weekly. A week that
+    starts before start_date is labeled with start_date."""
+    if grain == "auto":
+        grain = not_adopted_grain(start_date, end_date)
+    period = GRAINS[grain]
+    f = (start_date, end_date, teams, supervisors, languages)
+    df = _sum_by("v_adoption_daily", [period], ["enabled_eligible_calls", "enabled_interpreter_calls",
+                                                "enabled_no_support_calls"], f, con)
+    df = df.rename(columns={period: "period_start", "enabled_eligible_calls": "eligible_calls",
+                            "enabled_interpreter_calls": "interpreter_calls",
+                            "enabled_no_support_calls": "no_support_calls"})
+    df = df[df["eligible_calls"] > 0].reset_index(drop=True)
+    df["period_start"] = pd.to_datetime(df["period_start"])
+    if start_date is not None:
+        df["period_start"] = df["period_start"].clip(lower=pd.Timestamp(start_date))
+    df["not_adopted_calls"] = df["interpreter_calls"] + df["no_support_calls"]
+    df["not_adopted_share"] = _ratio(df["not_adopted_calls"], df["eligible_calls"])
     return df
 
 

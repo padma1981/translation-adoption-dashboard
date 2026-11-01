@@ -264,6 +264,34 @@ def test_adoption_split_matches_tool_adoption():
     assert empty["calls"].sum() == 0 and empty["share"].isna().all()
 
 
+def test_not_adopted_trend_splits_tool_enabled_calls():
+    """Tool-enabled eligible calls without the tool, split by path; not-enabled calls excluded."""
+    con = m.connect(tables=build_tables(
+        RATE_CALLS + [call("N1", "CON", "Spanish", "2026-06-11 10:00")],   # enabled, no support
+        RATE_SESSIONS, RATE_INTERP))
+    day = m.not_adopted_trend(grain="day", con=con).set_index("period_start")
+    assert day["eligible_calls"].to_dict() == {pd.Timestamp("2026-06-10"): 4,
+                                               pd.Timestamp("2026-06-11"): 1}
+    assert day.loc["2026-06-10", ["interpreter_calls", "no_support_calls"]].tolist() == [1, 0]
+    assert day.loc["2026-06-11", ["interpreter_calls", "no_support_calls"]].tolist() == [0, 1]
+    assert day["not_adopted_share"].tolist() == pytest.approx([0.25, 1.0])
+    week = m.not_adopted_trend(grain="week", con=con).iloc[0]
+    split = m.adoption_split(con=con).set_index("slice")["calls"]
+    assert week.not_adopted_calls == split["Did not adopt"] == 2
+    assert week.not_adopted_share == pytest.approx(2 / 5)
+    # A week starting before start_date is labeled with start_date.
+    clipped = m.not_adopted_trend("2026-06-11", "2026-09-30", grain="week", con=con)
+    assert clipped["period_start"].tolist() == [pd.Timestamp("2026-06-11")]
+
+
+def test_not_adopted_grain_switches_at_31_days():
+    assert m.not_adopted_grain("2026-09-01", "2026-10-01") == "day"     # 31 days
+    assert m.not_adopted_grain("2026-09-01", "2026-10-02") == "week"    # 32 days
+    assert m.not_adopted_grain(None, None) == "week"
+    con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
+    assert len(m.not_adopted_trend("2026-06-01", "2026-06-30", con=con)) == 1   # one day with calls
+
+
 def test_cost_avoided_formula():
     pre = [  # April = before the first rollout (2026-05-01)
         call("P1", "FLU", "Spanish", "2026-04-10 09:00"),
@@ -321,6 +349,7 @@ FILTER_INTERP = RATE_INTERP + [interpreter("IF2", "F2", 6), interpreter("IF3", "
 FUNCTIONS = {
     "kpi_summary": {},
     "adoption_split": {},
+    "not_adopted_trend": {"grain": "week"},
     "adoption_trend_week": {"grain": "week"},
     "adoption_trend_month_team": {"grain": "month", "by": "team", "fn": "adoption_trend"},
     "adoption_by_supervisor": {"by": "supervisor", "fn": "adoption_by"},

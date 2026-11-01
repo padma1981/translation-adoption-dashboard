@@ -17,6 +17,10 @@ select
     count(*) filter (where expected_support = 'translation_tool') as enabled_eligible_calls,
     count(*) filter (where expected_support = 'translation_tool'
                        and handling_path = 'translation_tool') as enabled_tool_calls,
+    count(*) filter (where expected_support = 'translation_tool'
+                       and handling_path = 'interpreter_line') as enabled_interpreter_calls,
+    count(*) filter (where expected_support = 'translation_tool'
+                       and handling_path = 'no_support') as enabled_no_support_calls,
     count(*) filter (where expected_support = 'interpreter_line') as not_enabled_eligible_calls,
     count(*) filter (where expected_support = 'interpreter_line'
                        and handling_path = 'interpreter_line') as not_enabled_interpreter_calls,

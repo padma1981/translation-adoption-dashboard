@@ -58,15 +58,22 @@ PRESETS = ["All time", "Last 7 days", "Last 30 days", "Last 90 days", "Month to 
 
 # --- Data access -------------------------------------------------------------
 
+# Hash of the code and data, set by the entry point (streamlit_app.code_version).
+# Passed to every cached loader so a deploy never reuses results cached by an
+# older version.
+VERSION = None
+OPTION_KEYS = {"min_date", "max_date", "first_rollout_date", "teams", "supervisors", "languages"}
+
+
 @st.cache_resource(show_spinner=False)
-def _connection():
+def _connection(version):
     """One DuckDB connection over the committed Parquet files."""
     return metrics.connect()
 
 
 @st.cache_data(show_spinner=False)
-def _cached(fn_name, filter_args, extra):
-    con = _connection().cursor()   # a cursor per call keeps DuckDB thread-safe
+def _cached(fn_name, filter_args, extra, version):
+    con = _connection(version).cursor()   # a cursor per call keeps DuckDB thread-safe
     try:
         return getattr(metrics, fn_name)(*filter_args, con=con, **dict(extra))
     finally:
@@ -75,16 +82,25 @@ def _cached(fn_name, filter_args, extra):
 
 def q(fn, f, **kwargs) -> pd.DataFrame:
     """Call a src.metrics function with the active filters, cached."""
-    return _cached(fn.__name__, f.args(), tuple(sorted(kwargs.items())))
+    return _cached(fn.__name__, f.args(), tuple(sorted(kwargs.items())), VERSION)
 
 
 @st.cache_data(show_spinner=False)
-def options() -> dict:
-    con = _connection().cursor()
+def _options(version) -> dict:
+    con = _connection(version).cursor()
     try:
         return metrics.filter_options(con=con)
     finally:
         con.close()
+
+
+def options() -> dict:
+    """Filter bar values. Recomputed if the cache holds a dict from an older version."""
+    opts = _options(VERSION)
+    if not OPTION_KEYS <= set(opts):
+        _options.clear()
+        opts = _options(VERSION)
+    return opts
 
 
 def team_colors() -> dict:
@@ -139,12 +155,39 @@ def _widget_changed(key):
         ss.preset = "Custom"
 
 
+LIST_KEYS = ("teams", "supervisors", "languages")
+STALE_KEYS = ["sites", "_w_sites"]   # filters removed in earlier versions
+
+
+def _defaults(opts) -> dict:
+    """Default value for every filter key."""
+    return {"preset": "All time", "start_date": opts["min_date"], "end_date": opts["max_date"],
+            **{key: list(opts[key]) for key in LIST_KEYS}}
+
+
 def _reset():
-    opts = options()
-    st.session_state.preset = "All time"
-    st.session_state.start_date, st.session_state.end_date = opts["min_date"], opts["max_date"]
-    for key in ("teams", "supervisors", "languages"):
-        st.session_state[key] = list(opts[key])
+    defaults = _defaults(options())   # read options first, so a failure leaves state untouched
+    for key in FILTER_KEYS:
+        st.session_state[key] = defaults[key]
+
+
+def _repair_state(opts):
+    """Initialize filter keys that are missing or no longer valid (e.g. a session
+    carried over from an older version), and drop keys of removed filters."""
+    ss, defaults = st.session_state, _defaults(opts)
+    for key in STALE_KEYS:
+        ss.pop(key, None)
+    if ss.get("preset") not in PRESETS:
+        ss.preset = defaults["preset"]
+    for key in ("start_date", "end_date"):
+        value = ss.get(key)
+        if not isinstance(value, date) or not opts["min_date"] <= value <= opts["max_date"]:
+            ss[key] = defaults[key]
+    for key in LIST_KEYS:
+        value = ss.get(key)
+        valid = [v for v in value if v in opts[key]] if isinstance(value, (list, tuple)) else []
+        # Keep a deliberate empty selection; replace one that only held stale values.
+        ss[key] = valid if valid or value == [] else defaults[key]
 
 
 FILTER_BAR_CSS = """
@@ -186,8 +229,7 @@ def render_filter_bar():
     """
     opts = options()
     ss = st.session_state
-    if "preset" not in ss:
-        _reset()
+    _repair_state(opts)
 
     for key in FILTER_KEYS:
         ss[f"_w_{key}"] = ss[key]
@@ -287,7 +329,8 @@ def style(fig, height=380, pct_axis=False, legend=True):
     fig.update_layout(
         height=height, margin=dict(l=10, r=10, t=40, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, title=None),
-        showlegend=legend, hovermode="x unified", plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=legend, hovermode="x unified",
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(size=13),
     )
     fig.update_xaxes(showgrid=False, title_text="")
@@ -317,6 +360,7 @@ def mark_dates(fig, rows, label_col, date_col, start=None, end=None):
 
 
 def show(fig, width="stretch"):
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, width=width, config={"displayModeBar": False})
 
 
