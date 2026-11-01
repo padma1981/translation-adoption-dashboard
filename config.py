@@ -177,5 +177,11 @@ SESSION_NULL_CALL_ID_SHARE = 0.10  # logging gap; linked later by time window
 ORPHAN_SESSION_SHARE = 0.01        # sessions outside any call (cannot link)
 AGENT_RATING_RESPONSE_RATE = 0.40
 
+# --- Metric layer ----------------------------------------------------------
+# Null call_id sessions link to a call that contains the session start. Only
+# if none does, a call within this many seconds of the session start is used
+# (closest call start wins; multiple candidates are flagged as ambiguous).
+LINK_TOLERANCE_SEC = 0
+
 # --- Output ----------------------------------------------------------------
 RAW_DATA_DIR = "data/raw"

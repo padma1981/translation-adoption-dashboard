@@ -20,7 +20,7 @@ translation-adoption-dashboard/
   data_gen/generate.py   # writes Parquet files to data/raw/, then runs checks
   data_gen/checks.py     # data consistency checks (also run by pytest)
   data/raw/
-  sql/                   # DuckDB view definitions for metrics
+  sql/                   # DuckDB views, one file per view, run in file-name order
   src/metrics.py         # loads views, returns DataFrames for the app
   app/streamlit_app.py   # main page
   app/pages/             # additional dashboard pages
@@ -94,6 +94,19 @@ more than one call matches, pick the call with the closest start time and show
 the ambiguous count. Report how many sessions were linked each way, how many
 could not be linked, and how many are dated before the agent's tool_enabled_date,
 on the Data Quality page.
+
+### Metric layer
+Views in sql/ are layered: base (v_agent, v_agent_language) -> session linking
+(v_session_linked) -> call fact (v_call_enriched) -> daily metric views at
+day x agent x language grain (v_adoption_daily, v_ramp_daily,
+v_interpreter_daily, v_cost_baseline, v_cost_avoided_daily, v_operational_daily,
+v_routing_daily) -> data quality views (v_dq_*). Metric views hold counts and
+sums only; src/metrics.py applies the filters, sums, and computes rates as
+ratios of sums, so rates are correct at any grain. Every metrics function takes
+start_date, end_date, teams, sites, languages (None = all) and returns a
+DataFrame. Sessions filter on session date and source language. Orphan
+interpreter rows have no call, so filters cannot apply to them. The time-window
+tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
 
 ## Synthetic data assumptions (put all of these in config.py)
 - Random seed fixed so data is reproducible
