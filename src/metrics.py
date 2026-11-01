@@ -184,35 +184,39 @@ def adoption_split(start_date=None, end_date=None, teams=None, supervisors=None,
     return df
 
 
-def not_adopted_grain(start_date, end_date) -> str:
-    """'day' when the range is 31 days or less, otherwise 'week'."""
-    if start_date is None or end_date is None:
-        return "week"
-    return "day" if (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days + 1 <= 31 else "week"
-
-
-def not_adopted_trend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
-                      grain="auto", con=None) -> pd.DataFrame:
-    """Tool-enabled eligible calls that did not use the tool, per period, split into
-    interpreter line and no support, with the share not using the tool.
-    grain 'auto' = daily for ranges of 31 days or less, else weekly. A week that
-    starts before start_date is labeled with start_date."""
-    if grain == "auto":
-        grain = not_adopted_grain(start_date, end_date)
-    period = GRAINS[grain]
+def repeat_non_users(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                     min_missed=3, con=None) -> pd.DataFrame:
+    """Agents with at least min_missed missed calls (tool-enabled eligible calls handled
+    with the interpreter line or no support), most missed first, with tool adoption."""
     f = (start_date, end_date, teams, supervisors, languages)
-    df = _sum_by("v_adoption_daily", [period], ["enabled_eligible_calls", "enabled_interpreter_calls",
-                                                "enabled_no_support_calls"], f, con)
-    df = df.rename(columns={period: "period_start", "enabled_eligible_calls": "eligible_calls",
-                            "enabled_interpreter_calls": "interpreter_calls",
+    df = _sum_by("v_adoption_daily", ["agent_id", "agent_name", "team", "supervisor"],
+                 ["enabled_eligible_calls", "enabled_tool_calls", "enabled_interpreter_calls",
+                  "enabled_no_support_calls"], f, con)
+    df = df.rename(columns={"enabled_interpreter_calls": "interpreter_calls",
                             "enabled_no_support_calls": "no_support_calls"})
-    df = df[df["eligible_calls"] > 0].reset_index(drop=True)
-    df["period_start"] = pd.to_datetime(df["period_start"])
-    if start_date is not None:
-        df["period_start"] = df["period_start"].clip(lower=pd.Timestamp(start_date))
-    df["not_adopted_calls"] = df["interpreter_calls"] + df["no_support_calls"]
-    df["not_adopted_share"] = _ratio(df["not_adopted_calls"], df["eligible_calls"])
-    return df
+    df["missed_calls"] = df["interpreter_calls"] + df["no_support_calls"]
+    df["tool_adoption"] = _ratio(df["enabled_tool_calls"], df["enabled_eligible_calls"])
+    df = df[df["missed_calls"] >= max(int(min_missed), 1)]
+    return df.sort_values(["missed_calls", "agent_name", "agent_id"],
+                          ascending=[False, True, True]).reset_index(drop=True)
+
+
+def missed_call_details(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                        min_missed=3, con=None) -> pd.DataFrame:
+    """One row per missed call of every agent listed by repeat_non_users, by agent then call time."""
+    agents = repeat_non_users(start_date, end_date, teams, supervisors, languages, min_missed,
+                              con=con)["agent_id"].tolist()
+    where, params = _where(start_date, end_date, teams, supervisors, languages,
+                           date_col="call_date", lang_col="caller_language")
+    return (con or get_connection()).execute(f"""
+        select agent_id, agent_name, team, supervisor, call_id, call_start_ts, caller_language, queue,
+               handling_path, tool_enabled_date, talk_sec, hold_sec, handle_sec,
+               interpreter_minutes, interpreter_cost_usd, transferred, disposition, csat
+        from v_call_enriched
+        where expected_support = 'translation_tool'
+          and handling_path in ('interpreter_line', 'no_support')
+          and list_contains(?::varchar[], agent_id) and {where}
+        order by agent_name, agent_id, call_start_ts""", [agents] + params).df()
 
 
 def adoption_trend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,

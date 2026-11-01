@@ -264,32 +264,40 @@ def test_adoption_split_matches_tool_adoption():
     assert empty["calls"].sum() == 0 and empty["share"].isna().all()
 
 
-def test_not_adopted_trend_splits_tool_enabled_calls():
-    """Tool-enabled eligible calls without the tool, split by path; not-enabled calls excluded."""
-    con = m.connect(tables=build_tables(
-        RATE_CALLS + [call("N1", "CON", "Spanish", "2026-06-11 10:00")],   # enabled, no support
-        RATE_SESSIONS, RATE_INTERP))
-    day = m.not_adopted_trend(grain="day", con=con).set_index("period_start")
-    assert day["eligible_calls"].to_dict() == {pd.Timestamp("2026-06-10"): 4,
-                                               pd.Timestamp("2026-06-11"): 1}
-    assert day.loc["2026-06-10", ["interpreter_calls", "no_support_calls"]].tolist() == [1, 0]
-    assert day.loc["2026-06-11", ["interpreter_calls", "no_support_calls"]].tolist() == [0, 1]
-    assert day["not_adopted_share"].tolist() == pytest.approx([0.25, 1.0])
-    week = m.not_adopted_trend(grain="week", con=con).iloc[0]
-    split = m.adoption_split(con=con).set_index("slice")["calls"]
-    assert week.not_adopted_calls == split["Did not adopt"] == 2
-    assert week.not_adopted_share == pytest.approx(2 / 5)
-    # A week starting before start_date is labeled with start_date.
-    clipped = m.not_adopted_trend("2026-06-11", "2026-09-30", grain="week", con=con)
-    assert clipped["period_start"].tolist() == [pd.Timestamp("2026-06-11")]
+MISSED_CALLS = RATE_CALLS + [
+    call("N1", "CON", "Spanish", "2026-06-11 10:00"),      # enabled, no support
+    call("N2", "CON", "Mandarin", "2026-06-12 09:00"),     # enabled, no support
+    call("N3", "CON", "Spanish", "2026-06-12 11:00"),      # enabled, interpreter
+]
+MISSED_INTERP = RATE_INTERP + [interpreter("IN3", "N3", 5)]
 
 
-def test_not_adopted_grain_switches_at_31_days():
-    assert m.not_adopted_grain("2026-09-01", "2026-10-01") == "day"     # 31 days
-    assert m.not_adopted_grain("2026-09-01", "2026-10-02") == "week"    # 32 days
-    assert m.not_adopted_grain(None, None) == "week"
-    con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
-    assert len(m.not_adopted_trend("2026-06-01", "2026-06-30", con=con)) == 1   # one day with calls
+def test_repeat_non_users_counts_missed_calls():
+    """Missed = tool-enabled eligible call with interpreter line or no support.
+    OFF's calls (tool not enabled) and NAT's native call never count."""
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    df = m.repeat_non_users(min_missed=1, con=con)
+    assert df["agent_id"].tolist() == ["CON", "MIS"]          # most missed first
+    con_row = df.iloc[0]
+    assert (con_row.interpreter_calls, con_row.no_support_calls, con_row.missed_calls) == (1, 2, 3)
+    assert (con_row.enabled_eligible_calls, con_row.enabled_tool_calls) == (4, 1)
+    assert con_row.tool_adoption == pytest.approx(0.25)
+    assert m.repeat_non_users(min_missed=3, con=con)["agent_id"].tolist() == ["CON"]
+    assert m.repeat_non_users(min_missed=4, con=con).empty
+    assert m.repeat_non_users(min_missed=3, languages=["Spanish"], con=con).empty   # CON: 2 Spanish
+    assert m.repeat_non_users(min_missed=1, end_date="2026-06-11", con=con).set_index(
+        "agent_id")["missed_calls"].to_dict() == {"CON": 1, "MIS": 1}
+
+
+def test_missed_call_details_lists_every_missed_call_of_listed_agents():
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    calls = m.missed_call_details(min_missed=1, con=con)
+    assert calls["call_id"].tolist() == ["N1", "N2", "N3", "R4"]   # by agent name, then time
+    assert set(calls["handling_path"]) == {"interpreter_line", "no_support"}
+    assert m.missed_call_details(min_missed=3, con=con)["call_id"].tolist() == ["N1", "N2", "N3"]
+    assert m.missed_call_details(min_missed=9, con=con).empty
+    summary = m.repeat_non_users(min_missed=1, con=con)
+    assert len(calls) == summary["missed_calls"].sum()
 
 
 def test_cost_avoided_formula():
@@ -349,7 +357,8 @@ FILTER_INTERP = RATE_INTERP + [interpreter("IF2", "F2", 6), interpreter("IF3", "
 FUNCTIONS = {
     "kpi_summary": {},
     "adoption_split": {},
-    "not_adopted_trend": {"grain": "week"},
+    "repeat_non_users": {"min_missed": 1},
+    "missed_call_details": {"min_missed": 1},
     "adoption_trend_week": {"grain": "week"},
     "adoption_trend_month_team": {"grain": "month", "by": "team", "fn": "adoption_trend"},
     "adoption_by_supervisor": {"by": "supervisor", "fn": "adoption_by"},
@@ -373,9 +382,9 @@ FUNCTIONS = {
     "dq_agents_without_language_records": {},
     "dq_summary": {},
 }
-NON_ADDITIVE = {"agents", "days_since_enabled", "languages_missing", "pre_rollout_eligible_calls",
+NON_ADDITIVE = {"agents", "csat", "days_since_enabled", "languages_missing", "pre_rollout_eligible_calls",
                 "pre_rollout_interpreter_calls", "value"}
-ROW_LISTS = {"dq_sessions_before_enablement"}   # functions returning one row per record
+ROW_LISTS = {"dq_sessions_before_enablement", "missed_call_details"}   # functions returning one row per record
 PARTITIONS = {
     "date": [{"end_date": "2026-05-31"}, {"start_date": "2026-06-01"}],
     "team": [{"teams": ["T1"]}, {"teams": ["T2"]}],

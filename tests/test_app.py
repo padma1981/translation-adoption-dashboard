@@ -76,22 +76,28 @@ def test_filters_survive_page_switches():
 def test_overview_adoption_card():
     at = run_page(None)
     assert not at.exception
-    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Eligible Calls Without the Tool"]
+    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Agents Repeatedly Not Using the Tool"]
     line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
     assert line.value == "**8,114** of **14,844** eligible calls adopted the tool"
     assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
     assert not [c for c in at.caption if "Contact center calls" in c.value]
 
 
-def test_overview_not_adopted_card():
+def test_overview_repeat_non_users():
     at = run_page(None)
-    sub = [h for h in at.subheader if h.value == "Eligible Calls Without the Tool"][0]
-    assert sub.help.startswith("Tool-enabled eligible calls where the agent used")
-    line = [m for m in at.markdown if "did not use the tool" in m.value][0]
-    assert line.value == "**6,730** tool-enabled eligible calls did not use the tool (weekly)"
-    at = run_page(None, preset="Custom", start_date=date(2026, 9, 1), end_date=date(2026, 9, 30))
+    sub = [h for h in at.subheader if h.value == "Agents Repeatedly Not Using the Tool"][0]
+    assert sub.help.startswith("Agents whose tool was enabled but who handled eligible calls")
+    assert at.number_input(key="min_missed").value == 3
+    line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
+    assert line.value == "**143** agents with **6,728** missed calls (at least 3 each)"
+    assert any(c.value == "Showing 15 of 143 agents; the CSV includes all." for c in at.caption)
+    at.number_input(key="min_missed").set_value(90).run()
     assert not at.exception
-    assert [m for m in at.markdown if "did not use the tool" in m.value][0].value.endswith("(daily)")
+    line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
+    assert line.value == "**2** agents with **184** missed calls (at least 90 each)"
+    assert not [c for c in at.caption if c.value.startswith("Showing")]
+    at.number_input(key="min_missed").set_value(500).run()
+    assert any("No agents have 500 or more missed calls" in i.value for i in at.info)
 
 
 # --- Sessions and caches carried over from an earlier version ---------------------------
@@ -140,8 +146,8 @@ def test_stale_metrics_module_is_reloaded():
     run_page(None)
     import ui
     ui.VERSION = "old"
-    del ui.metrics.not_adopted_trend
+    del ui.metrics.repeat_non_users
     del ui.render_filter_bar
     at = run_page(None)
     assert not at.exception, at.exception
-    assert hasattr(ui.metrics, "not_adopted_trend") and hasattr(ui, "render_filter_bar")
+    assert hasattr(ui.metrics, "repeat_non_users") and hasattr(ui, "render_filter_bar")
