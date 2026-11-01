@@ -316,8 +316,8 @@ def mark_dates(fig, rows, label_col, date_col, start=None, end=None):
     return fig
 
 
-def show(fig):
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+def show(fig, width="stretch"):
+    st.plotly_chart(fig, width=width, config={"displayModeBar": False})
 
 
 def path_label(df, col="handling_path"):

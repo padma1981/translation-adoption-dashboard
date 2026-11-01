@@ -71,3 +71,13 @@ def test_filters_survive_page_switches():
         assert at.session_state["teams"] == ["Echo"]
         assert at.session_state["supervisors"] == ["Cynthia Reyes"]
         assert "Teams: Echo · Supervisors: Cynthia Reyes · Languages: Mandarin" in at.caption[0].value
+
+
+def test_overview_adoption_card():
+    at = run_page(None)
+    assert not at.exception
+    assert [h.value for h in at.subheader] == ["Adoption Percentage"]
+    line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
+    assert line.value == "**8,114** of **14,844** eligible calls adopted the tool"
+    assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
+    assert not [c for c in at.caption if "Contact center calls" in c.value]
