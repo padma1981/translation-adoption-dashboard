@@ -245,11 +245,23 @@ def test_low_adopters_is_leaderboard_reversed():
     assert m.low_adopters(min_enabled_calls=99, con=con).empty
 
 
-def test_team_rollout_dates_respect_team_and_site():
+def test_team_rollout_dates_respect_team_and_supervisor():
     con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
     assert len(m.team_rollout_dates(con=con)) == len(con.execute("from dim_team").df())
     assert m.team_rollout_dates(teams=["T1"], con=con)["team"].tolist() == ["T1"]
     assert m.team_rollout_dates(teams=["nobody"], con=con).empty
+    assert m.team_rollout_dates(supervisors=["Sup Two"], con=con)["team"].tolist() == ["T2"]
+
+
+def test_adoption_split_matches_tool_adoption():
+    """Donut: tool-enabled eligible calls only; not-enabled calls (OFF, pre-rollout) excluded."""
+    con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
+    split = m.adoption_split(con=con).set_index("slice")
+    assert split["calls"].to_dict() == {"Adopted the tool": 3, "Did not adopt": 1}
+    assert split.loc["Adopted the tool", "share"] == pytest.approx(
+        m.kpi_summary(con=con).iloc[0].tool_adoption)
+    empty = m.adoption_split(teams=["nobody"], con=con)
+    assert empty["calls"].sum() == 0 and empty["share"].isna().all()
 
 
 def test_cost_avoided_formula():
@@ -308,6 +320,7 @@ FILTER_INTERP = RATE_INTERP + [interpreter("IF2", "F2", 6), interpreter("IF3", "
 # Every metric function with the extra arguments that pick a non-trivial shape.
 FUNCTIONS = {
     "kpi_summary": {},
+    "adoption_split": {},
     "adoption_trend_week": {"grain": "week"},
     "adoption_trend_month_team": {"grain": "month", "by": "team", "fn": "adoption_trend"},
     "adoption_by_supervisor": {"by": "supervisor", "fn": "adoption_by"},
@@ -337,12 +350,12 @@ ROW_LISTS = {"dq_sessions_before_enablement"}   # functions returning one row pe
 PARTITIONS = {
     "date": [{"end_date": "2026-05-31"}, {"start_date": "2026-06-01"}],
     "team": [{"teams": ["T1"]}, {"teams": ["T2"]}],
-    "site": [{"sites": ["S1"]}, {"sites": ["S2"]}],
+    "supervisor": [{"supervisors": ["Sup One"]}, {"supervisors": ["Sup Two"]}],
     "language": [{"languages": [lang]} for lang in ["English"] + cfg.IN_SCOPE_LANGUAGES],
 }
 # Agents in the fixtures are hired 2025-01-01, so a 2024 window holds nothing.
 EXCLUDE = {"date": {"start_date": "2024-01-01", "end_date": "2024-12-31"}, "team": {"teams": ["nobody"]},
-           "site": {"sites": ["nowhere"]}, "language": {"languages": ["Klingon"]}}
+           "supervisor": {"supervisors": ["nobody"]}, "language": {"languages": ["Klingon"]}}
 
 
 @pytest.fixture(scope="module")
@@ -367,7 +380,7 @@ def totals(df):
 @pytest.mark.parametrize("name", list(FUNCTIONS))
 def test_filter_excluding_everything_gives_nothing(filter_con, name, dim):
     t = totals(run(name, filter_con, **EXCLUDE[dim]))
-    if name in ("kpi_summary", "dq_summary"):    # always one row / fixed rows
+    if name in ("kpi_summary", "adoption_split", "dq_summary"):   # fixed rows
         t = t.drop("rows")
     if name == "dq_summary":
         assert (run(name, filter_con, **EXCLUDE[dim])["value"] == 0).all()
@@ -394,7 +407,7 @@ def test_filters_known_counts(filter_con):
     count = lambda **f: m.kpi_summary(**f, con=filter_con).iloc[0].eligible_calls  # noqa: E731
     assert count() == 9           # R1-R6 + F1, F2, F3 (F4 native, F5 English)
     assert count(teams=["T1"]) == 3                 # R1, R2, F1
-    assert count(sites=["S2"]) == 6
+    assert count(supervisors=["Sup Two"]) == 6
     assert count(languages=["Portuguese"]) == 1     # F2
     assert count(start_date="2026-05-01", end_date="2026-05-31") == 2
     assert count(teams=[]) == 0

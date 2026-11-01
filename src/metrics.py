@@ -2,7 +2,7 @@
 
 Every metric function takes the same filters:
     start_date, end_date  inclusive dates (None = no bound)
-    teams, sites          lists of names (None = all; [] = nothing)
+    teams, supervisors    lists of names (None = all; [] = nothing)
     languages             caller languages, or source language for sessions
 plus an optional `con` (defaults to the shared connection over data/raw/).
 Rates are ratios of summed counts, so they stay correct at any grain.
@@ -78,7 +78,7 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     return _default_con
 
 
-def _where(start_date, end_date, teams, sites, languages, date_col="day", lang_col="language"):
+def _where(start_date, end_date, teams, supervisors, languages, date_col="day", lang_col="language"):
     """SQL where clause and parameters for the standard filters."""
     clauses, params = ["true"], []
     if start_date is not None:
@@ -87,7 +87,7 @@ def _where(start_date, end_date, teams, sites, languages, date_col="day", lang_c
     if end_date is not None:
         clauses.append(f"{date_col} <= ?")
         params.append(pd.Timestamp(end_date).date())
-    for col, values in (("team", teams), ("site", sites), (lang_col, languages)):
+    for col, values in (("team", teams), ("supervisor", supervisors), (lang_col, languages)):
         if values is not None:
             clauses.append(f"list_contains(?::varchar[], {col})")
             params.append(list(values))
@@ -130,7 +130,7 @@ def _keys(grain=None, by=None):
 # --- Filter helpers (not filtered themselves) -------------------------------
 
 def filter_options(con=None) -> dict:
-    """Values for the sidebar: date bounds, first rollout date, teams, sites, languages."""
+    """Values for the filter bar: date bounds, first rollout date, teams, supervisors, languages."""
     con = con or get_connection()
     lo, hi = con.execute("select min(call_date), max(call_date) from v_call_enriched").fetchone()
     return {
@@ -138,16 +138,17 @@ def filter_options(con=None) -> dict:
         "max_date": hi,
         "first_rollout_date": con.execute("select min(rollout_date) from dim_team").fetchone()[0],
         "teams": [r[0] for r in con.execute("select team from dim_team order by team").fetchall()],
-        "sites": [r[0] for r in con.execute("select distinct site from dim_team order by 1").fetchall()],
+        "supervisors": [r[0] for r in con.execute(
+            "select distinct supervisor from dim_team order by 1").fetchall()],
         "languages": list(cfg.IN_SCOPE_LANGUAGES),
     }
 
 
-def team_rollout_dates(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def team_rollout_dates(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                        con=None) -> pd.DataFrame:
-    """Tool rollout date per team (for chart markers), limited to the selected teams/sites.
+    """Tool rollout date per team (for chart markers), limited to the selected teams/supervisors.
     Dates and languages are accepted for a uniform signature but not applied."""
-    where, params = _where(None, None, teams, sites, None)
+    where, params = _where(None, None, teams, supervisors, None)
     return (con or get_connection()).execute(
         f"select team, site, rollout_date from dim_team where {where} order by rollout_date, team",
         params).df()
@@ -155,10 +156,10 @@ def team_rollout_dates(start_date=None, end_date=None, teams=None, sites=None, l
 
 # --- Adoption ----------------------------------------------------------------
 
-def kpi_summary(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def kpi_summary(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                 con=None) -> pd.DataFrame:
     """One row: eligible calls, adoption rates, interpreter spend, cost avoided."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     df = _add_rates(_sum_by("v_adoption_daily", [], ADOPTION_COUNTS, f, con))
     spend = interpreter_spend(*f, grain=None, con=con)
     avail = spend["tool_available"]
@@ -170,42 +171,54 @@ def kpi_summary(start_date=None, end_date=None, teams=None, sites=None, language
     return df
 
 
-def adoption_trend(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def adoption_split(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                   con=None) -> pd.DataFrame:
+    """Tool-enabled eligible calls split into adopted (translation_tool path) and not,
+    with each slice's share. The shares are tool adoption and its complement."""
+    k = kpi_summary(start_date, end_date, teams, supervisors, languages, con=con).iloc[0]
+    adopted, total = int(k["enabled_tool_calls"]), int(k["enabled_eligible_calls"])
+    df = pd.DataFrame({"slice": ["Adopted the tool", "Did not adopt"],
+                       "calls": [adopted, total - adopted]})
+    df["share"] = _ratio(df["calls"], np.full(len(df), total))
+    return df
+
+
+def adoption_trend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                    grain="week", by=None, con=None) -> pd.DataFrame:
     """Adoption, compliance and supported rate per day/week/month, optionally by a dimension."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     return _add_rates(_sum_by("v_adoption_daily", _keys(grain, by), ADOPTION_COUNTS, f, con))
 
 
-def adoption_by(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def adoption_by(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                 by="team", con=None) -> pd.DataFrame:
     """Adoption, compliance and supported rate by team, supervisor, site, language or agent."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     return _add_rates(_sum_by("v_adoption_daily", _keys(None, by), ADOPTION_COUNTS, f, con))
 
 
-def agent_leaderboard(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def agent_leaderboard(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                       min_enabled_calls=10, con=None) -> pd.DataFrame:
     """Agents with at least min_enabled_calls tool-enabled eligible calls, best adopters first."""
-    df = adoption_by(start_date, end_date, teams, sites, languages, by="agent", con=con)
+    df = adoption_by(start_date, end_date, teams, supervisors, languages, by="agent", con=con)
     df = df[df["enabled_eligible_calls"] >= min_enabled_calls]
     return df.sort_values(["tool_adoption", "enabled_eligible_calls"],
                           ascending=[False, False]).reset_index(drop=True)
 
 
-def low_adopters(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def low_adopters(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                  min_enabled_calls=10, con=None) -> pd.DataFrame:
     """Agents with at least min_enabled_calls tool-enabled eligible calls, lowest adopters first."""
-    df = adoption_by(start_date, end_date, teams, sites, languages, by="agent", con=con)
+    df = adoption_by(start_date, end_date, teams, supervisors, languages, by="agent", con=con)
     df = df[df["enabled_eligible_calls"] >= min_enabled_calls]
     return df.sort_values(["tool_adoption", "enabled_eligible_calls"],
                           ascending=[True, False]).reset_index(drop=True)
 
 
-def handling_path_trend(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def handling_path_trend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                         grain="week", con=None) -> pd.DataFrame:
     """Eligible calls per period x handling path (long format), with share of the period."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     period = GRAINS[grain]
     wide = _sum_by("v_adoption_daily", [period], ["tool_calls", "interpreter_calls",
                                                   "no_support_calls"], f, con)
@@ -218,10 +231,10 @@ def handling_path_trend(start_date=None, end_date=None, teams=None, sites=None, 
     return df.sort_values([period, "handling_path"], ascending=[True, False]).reset_index(drop=True)
 
 
-def handling_path_mix(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def handling_path_mix(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                       con=None) -> pd.DataFrame:
     """Eligible calls by expected_support x handling_path, with share of eligible calls."""
-    where, params = _where(start_date, end_date, teams, sites, languages,
+    where, params = _where(start_date, end_date, teams, supervisors, languages,
                            date_col="call_date", lang_col="caller_language")
     df = (con or get_connection()).execute(f"""
         select expected_support, handling_path, count(*) as calls
@@ -231,11 +244,11 @@ def handling_path_mix(start_date=None, end_date=None, teams=None, sites=None, la
     return df
 
 
-def ramp_curve(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def ramp_curve(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                bucket_days=7, by=None, con=None) -> pd.DataFrame:
     """Tool adoption by days since each agent's own tool_enabled_date, in buckets,
     optionally split by a dimension (e.g. by="team")."""
-    where, params = _where(start_date, end_date, teams, sites, languages)
+    where, params = _where(start_date, end_date, teams, supervisors, languages)
     dims = "".join(f", {k}" for k in _keys(None, by))
     df = (con or get_connection()).execute(f"""
         select floor(days_since_enabled / {int(bucket_days)}) * {int(bucket_days)} as days_since_enabled{dims},
@@ -251,10 +264,10 @@ def ramp_curve(start_date=None, end_date=None, teams=None, sites=None, languages
 
 # --- Languages and routing -------------------------------------------------
 
-def routing_mix(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def routing_mix(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                 grain=None, con=None) -> pd.DataFrame:
     """In-scope calls by language: native-routed vs overflow, native share, overflow rate."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     df = _sum_by("v_routing_daily", _keys(grain, "language"),
                  ["in_scope_calls", "native_routed_calls", "overflow_calls",
                   "native_handled_calls", "eligible_calls"], f, con)
@@ -263,10 +276,10 @@ def routing_mix(start_date=None, end_date=None, teams=None, sites=None, language
     return df
 
 
-def language_summary(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def language_summary(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                      con=None) -> pd.DataFrame:
     """Per language: volume, native share, overflow rate, eligible calls and rates."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     routing = routing_mix(*f, con=con).drop(columns=["eligible_calls"])
     adoption = adoption_by(*f, by="language", con=con)
     df = routing.merge(adoption[["language"] + ADOPTION_COUNTS], on="language", how="left")
@@ -276,11 +289,11 @@ def language_summary(start_date=None, end_date=None, teams=None, sites=None, lan
 
 # --- Operational impact ----------------------------------------------------
 
-def operational_by_path(start_date=None, end_date=None, teams=None, sites=None,
+def operational_by_path(start_date=None, end_date=None, teams=None, supervisors=None,
                         languages=None, by_language=False, con=None) -> pd.DataFrame:
     """Handle time, hold, transfer rate and CSAT by segment (handling path,
     native_exempt or english), optionally by language."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     keys = ["segment"] + (["language"] if by_language else [])
     df = _sum_by("v_operational_daily", keys,
                  ["calls", "talk_sec", "hold_sec", "handle_sec", "transferred_calls",
@@ -294,28 +307,28 @@ def operational_by_path(start_date=None, end_date=None, teams=None, sites=None,
 
 # --- Cost --------------------------------------------------------------------
 
-def interpreter_spend(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def interpreter_spend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                       grain="month", by_language=False, con=None) -> pd.DataFrame:
     """Interpreter calls, minutes and spend, split by tool_available
     (True = "interpreter used where tool was available")."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     keys = _keys(grain) + (["language"] if by_language else []) + ["tool_available"]
     return _sum_by("v_interpreter_daily", keys,
                    ["interpreter_calls", "interpreter_minutes", "interpreter_spend_usd"], f, con)
 
 
-def cost_avoided(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def cost_avoided(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                  grain="month", by_language=False, con=None) -> pd.DataFrame:
     """Estimated interpreter cost avoided by tool-supported calls over time."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     keys = _keys(grain) + (["language"] if by_language else [])
     return _sum_by("v_cost_avoided_daily", keys, ["tool_calls", "cost_avoided_usd"], f, con)
 
 
-def cost_avoided_by_language(start_date=None, end_date=None, teams=None, sites=None,
+def cost_avoided_by_language(start_date=None, end_date=None, teams=None, supervisors=None,
                              languages=None, con=None) -> pd.DataFrame:
     """Cost avoided per language with the pre-rollout baseline used to compute it."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     df = cost_avoided(*f, grain=None, by_language=True, con=con)
     baseline = (con or get_connection()).execute("select * from v_cost_baseline").df()
     return df.merge(baseline, on="language", how="left")
@@ -323,20 +336,20 @@ def cost_avoided_by_language(start_date=None, end_date=None, teams=None, sites=N
 
 # --- Data quality ------------------------------------------------------------
 
-def dq_session_links(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def dq_session_links(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                      con=None) -> pd.DataFrame:
     """Sessions by link method with ambiguous, pre-enablement, optional-use and
     call_id-not-found counts. Filters use session date and source language."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     return _sum_by("v_dq_session_daily", ["link_method"],
                    ["sessions", "ambiguous_sessions", "before_enablement_sessions",
                     "optional_use_sessions", "call_id_not_found_sessions"], f, con)
 
 
-def dq_sessions_before_enablement(start_date=None, end_date=None, teams=None, sites=None,
+def dq_sessions_before_enablement(start_date=None, end_date=None, teams=None, supervisors=None,
                                   languages=None, con=None) -> pd.DataFrame:
     """Session rows dated before the agent's tool_enabled_date (excluded from adoption)."""
-    where, params = _where(start_date, end_date, teams, sites, languages,
+    where, params = _where(start_date, end_date, teams, supervisors, languages,
                            date_col="session_date", lang_col="source_language")
     return (con or get_connection()).execute(f"""
         select session_id, agent_id, agent_name, team, site, session_start_ts,
@@ -346,11 +359,11 @@ def dq_sessions_before_enablement(start_date=None, end_date=None, teams=None, si
         order by session_start_ts""", params).df()
 
 
-def dq_agents_without_language_records(start_date=None, end_date=None, teams=None, sites=None,
+def dq_agents_without_language_records(start_date=None, end_date=None, teams=None, supervisors=None,
                                        languages=None, con=None) -> pd.DataFrame:
     """Agents employed in the date range with no proficiency record for any of
     the selected languages (all treated as 'none')."""
-    where, params = _where(None, None, teams, sites, languages)
+    where, params = _where(None, None, teams, supervisors, languages)
     emp, emp_params = ["true"], []
     if end_date is not None:
         emp.append("hire_date <= ?")
@@ -367,7 +380,7 @@ def dq_agents_without_language_records(start_date=None, end_date=None, teams=Non
         order by agent_id""", params + emp_params).df()
 
 
-def dq_orphan_interpreter_rows(start_date=None, end_date=None, teams=None, sites=None,
+def dq_orphan_interpreter_rows(start_date=None, end_date=None, teams=None, supervisors=None,
                                languages=None, con=None) -> pd.DataFrame:
     """Interpreter rows with no matching call. These rows have no date, team or
     language, so the filters cannot apply; all orphans are always returned."""
@@ -375,10 +388,10 @@ def dq_orphan_interpreter_rows(start_date=None, end_date=None, teams=None, sites
         "select * from v_dq_orphan_interpreter order by interpreter_call_id").df()
 
 
-def dq_summary(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+def dq_summary(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                con=None) -> pd.DataFrame:
     """Data quality headline counts as (metric, value) rows."""
-    f = (start_date, end_date, teams, sites, languages)
+    f = (start_date, end_date, teams, supervisors, languages)
     links = dq_session_links(*f, con=con).set_index("link_method")
     count = lambda method: int(links["sessions"].get(method, 0))  # noqa: E731
     rows = [

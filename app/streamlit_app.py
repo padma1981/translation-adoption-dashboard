@@ -7,7 +7,7 @@ The top menu and filter bar are drawn here once, so filters carry across every p
 from pathlib import Path
 import sys
 
-import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 st.set_page_config(page_title="Translation Tool Adoption", page_icon="🌐", layout="wide",
@@ -19,56 +19,38 @@ from ui import metrics  # noqa: E402
 
 
 def overview():
-    """Headline rates, volume and cost, and how they move over time."""
+    """One donut: tool-enabled eligible calls that adopted the tool vs did not."""
     f = ui.page_header("Translation Tool Adoption",
                        "Contact center calls in Spanish, Portuguese, Mandarin and Vietnamese.")
-    k = ui.q(metrics.kpi_summary, f).iloc[0]
+    split = ui.q(metrics.adoption_split, f)
+    total = int(split["calls"].sum())
+    if total == 0:
+        ui.no_data("tool-enabled eligible calls in this selection (the tool may not be "
+                   "rolled out yet for these teams and dates)")
+        st.stop()
+    adopted = split.set_index("slice").loc["Adopted the tool"]
 
-    cols = st.columns(3)
-    for col, rate in zip(cols, ui.RATE_LABELS):
-        col.metric(ui.RATE_LABELS[rate], ui.pct(k[rate]), border=True)
-        col.caption(ui.RATE_DEFINITIONS[rate])
-        if k[rate] != k[rate]:   # NaN: no calls in the denominator
-            col.caption("No calls in this selection to measure this rate.")
+    fig = go.Figure(go.Pie(
+        labels=split["slice"], values=split["calls"], hole=0.62, sort=False, direction="clockwise",
+        marker=dict(colors=[ui.PATH_COLORS["translation_tool"], ui.NOT_ADOPTED_COLOR],
+                    line=dict(color="white", width=3)),
+        textinfo="none", customdata=split["share"],
+        hovertemplate="%{label}<br>%{value:,} calls (%{customdata:.1%})<extra></extra>"))
+    fig.add_annotation(text=f"<b>{adopted['share']:.0%}</b>", x=0.5, y=0.56, showarrow=False,
+                       font=dict(size=56, color="#0b0b0b"))
+    fig.add_annotation(text=f"adoption<br>{int(adopted['calls']):,} of {total:,} eligible calls",
+                       x=0.5, y=0.38, showarrow=False, font=dict(size=14, color="#52514e"))
+    fig.update_layout(height=460, margin=dict(l=10, r=10, t=10, b=10), showlegend=True,
+                      legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.02, yanchor="top",
+                                  font=dict(size=14)))
 
-    cols = st.columns(3)
-    cols[0].metric("Eligible calls", ui.num(k["eligible_calls"]), border=True)
-    cols[0].caption("In-scope language calls handled by a non-native agent.")
-    cols[1].metric("Interpreter spend", ui.money(k["interpreter_spend_usd"]), border=True)
-    cols[1].caption(f"{ui.num(k['interpreter_minutes'])} interpreter minutes.")
-    cols[2].metric("Estimated cost avoided", ui.money(k["cost_avoided_usd"]), border=True)
-    cols[2].caption("Interpreter cost the tool-supported calls would likely have needed. See Cost.")
-
-    st.subheader("Weekly rates")
-    trend = ui.q(metrics.adoption_trend, f, grain="week")
-    fig = ui.rate_lines(trend, "week_start")
-    ui.mark_dates(fig, ui.q(metrics.team_rollout_dates, f), "team", "rollout_date", f.start, f.end)
-    ui.show(ui.style(fig, pct_axis=True))
-    st.caption("Dotted lines mark each selected team's tool rollout. Weeks start on Monday; "
-               "partial weeks at either end of the range have fewer calls.")
-
-    st.subheader("Handling path mix")
-    mix = ui.path_label(ui.q(metrics.handling_path_trend, f, grain="week"))
-    left, right = st.columns([2, 1])
-    with left:
-        fig = px.bar(mix, x="week_start", y="share_of_period", color="Handling path",
-                     color_discrete_map={ui.PATH_LABELS[p]: c for p, c in ui.PATH_COLORS.items()},
-                     category_orders={"Handling path": [ui.PATH_LABELS[p] for p in ui.PATH_ORDER]},
-                     custom_data=["calls"])
-        fig.update_traces(hovertemplate="%{y:.1%} (%{customdata[0]:,} calls)", marker_line_width=0)
-        fig.update_layout(bargap=0.15)
-        ui.show(ui.style(fig, pct_axis=True))
-        st.caption("Share of eligible calls each week by how they were handled.")
-    with right:
-        totals = (mix.groupby(["handling_path", "Handling path"], as_index=False)["calls"].sum()
-                  .sort_values("handling_path", key=lambda s: s.map(ui.PATH_ORDER.index)))
-        fig = px.pie(totals, names="Handling path", values="calls", hole=0.55,
-                     color="Handling path",
-                     color_discrete_map={ui.PATH_LABELS[p]: c for p, c in ui.PATH_COLORS.items()})
-        fig.update_traces(textinfo="percent", hovertemplate="%{label}: %{value:,} calls",
-                          sort=False, marker_line=dict(color="white", width=2))
-        ui.show(ui.style(fig, legend=True).update_layout(hovermode=False))
-        st.caption("Whole selected period.")
+    _, mid, _ = st.columns([1, 2, 1])
+    with mid:
+        ui.show(fig)
+        st.caption("**Eligible calls:** Spanish, Portuguese, Mandarin or Vietnamese calls handled "
+                   "by an agent who is not native in that language and whose translation tool "
+                   "was enabled on the call date. **Adopted the tool:** a translation session is "
+                   "linked to the call. **Did not adopt:** interpreter line or no support.")
 
     ui.footnote()
 

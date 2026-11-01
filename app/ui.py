@@ -31,6 +31,7 @@ PATH_LABELS = {
     "native_exempt": "Native speaker (exempt)",
 }
 PATH_ORDER = ["translation_tool", "interpreter_line", "no_support", "native_exempt"]
+NOT_ADOPTED_COLOR = "#d6d4cc"   # neutral remainder of the Overview adoption donut
 RATE_COLORS = {
     "tool_adoption": PATH_COLORS["translation_tool"],
     "interpreter_compliance": PATH_COLORS["interpreter_line"],
@@ -98,13 +99,13 @@ class Filters:
     start: date
     end: date
     teams: tuple | None      # None = all
-    sites: tuple | None
+    supervisors: tuple | None
     languages: tuple
 
     def args(self):
         """Positional filter arguments for src.metrics functions."""
         as_list = lambda v: None if v is None else list(v)  # noqa: E731
-        return (self.start, self.end, as_list(self.teams), as_list(self.sites),
+        return (self.start, self.end, as_list(self.teams), as_list(self.supervisors),
                 list(self.languages))
 
 
@@ -125,7 +126,7 @@ def preset_range(preset, opts):
 # Filter values live in these session_state keys. Widgets use separate "_w_"
 # keys that are refreshed from them on every run, because Streamlit can drop a
 # widget's own state (e.g. inside an unopened popover) when the page changes.
-FILTER_KEYS = ["preset", "start_date", "end_date", "teams", "sites", "languages"]
+FILTER_KEYS = ["preset", "start_date", "end_date", "teams", "supervisors", "languages"]
 
 
 def _widget_changed(key):
@@ -142,8 +143,8 @@ def _reset():
     opts = options()
     st.session_state.preset = "All time"
     st.session_state.start_date, st.session_state.end_date = opts["min_date"], opts["max_date"]
-    for key, values in (("teams", "teams"), ("sites", "sites"), ("languages", "languages")):
-        st.session_state[key] = list(opts[values])
+    for key in ("teams", "supervisors", "languages"):
+        st.session_state[key] = list(opts[key])
 
 
 FILTER_BAR_CSS = """
@@ -194,28 +195,29 @@ def render_filter_bar():
 
     st.html(FILTER_BAR_CSS)
     with st.container(border=True, key="filter_bar"):
-        cols = st.columns([1.3, 1.1, 1.1, 1, 1, 1.15, 0.8], gap="small", vertical_alignment="bottom")
+        cols = st.columns([1.2, 1.35, 1.35, 1, 1.2, 1.15, 0.65], gap="small",
+                          vertical_alignment="bottom")
         cols[0].selectbox("Date range", PRESETS, **widget("preset"),
                           help=f"Presets count back from the last day of data "
                                f"({opts['max_date']:%b %d, %Y}).")
         kw = dict(min_value=opts["min_date"], max_value=opts["max_date"], format="YYYY-MM-DD")
         cols[1].date_input("Start", **widget("start_date"), **kw)
         cols[2].date_input("End", **widget("end_date"), **kw)
-        for col, key, label in ((cols[3], "teams", "Team"), (cols[4], "sites", "Site"),
+        for col, key, label in ((cols[3], "teams", "Team"), (cols[4], "supervisors", "Supervisor"),
                                 (cols[5], "languages", "Language")):
             with col.popover(_summary(label, ss[key], opts[key]), width="stretch"):
                 st.multiselect(label, opts[key], **widget(key), placeholder=f"Choose {key}")
-        cols[6].button("Reset filters", on_click=_reset, width="stretch")
+        cols[6].button("Reset", on_click=_reset, width="stretch", help="Reset all filters")
 
     errors = []
     if ss.start_date > ss.end_date:
         errors.append("Start date is after end date. Pick a start date on or before the end date.")
-    for key, label in (("teams", "team"), ("sites", "site"), ("languages", "language")):
+    for key, label in (("teams", "team"), ("supervisors", "supervisor"), ("languages", "language")):
         if not ss[key]:
             errors.append(f"Select at least one {label}.")
 
     all_or = lambda key: None if set(ss[key]) == set(opts[key]) else tuple(sorted(ss[key]))  # noqa: E731
-    ss.filters = Filters(ss.start_date, ss.end_date, all_or("teams"), all_or("sites"),
+    ss.filters = Filters(ss.start_date, ss.end_date, all_or("teams"), all_or("supervisors"),
                          tuple(l for l in opts["languages"] if l in ss.languages))
     ss.filter_errors = errors
 
@@ -238,7 +240,8 @@ def page_header(title, subtitle=None, require_data=True) -> Filters:
     st.markdown(
         f"**{f.start:%b %d, %Y} – {f.end:%b %d, %Y}** ({days:,} days, {st.session_state.preset.lower()})"
         if days > 0 else "**Invalid date range**")
-    st.caption(f"Teams: {_describe(f.teams, opts['teams'])} · Sites: {_describe(f.sites, opts['sites'])}"
+    st.caption(f"Teams: {_describe(f.teams, opts['teams'])}"
+               f" · Supervisors: {_describe(f.supervisors, opts['supervisors'])}"
                f" · Languages: {_describe(f.languages, opts['languages'])}")
     if subtitle:
         st.caption(subtitle)
@@ -254,13 +257,13 @@ def page_header(title, subtitle=None, require_data=True) -> Filters:
 
 
 def no_data(what="these filters"):
-    st.info(f"No data for {what}. Try a wider date range or add teams, sites or languages "
+    st.info(f"No data for {what}. Try a wider date range or add teams, supervisors or languages "
             "in the filter bar.", icon="🔎")
 
 
 def footnote():
     st.divider()
-    st.caption("Team and site use each agent's current team; team history isn't modeled. "
+    st.caption("Team and supervisor use each agent's current team; team history isn't modeled. "
                "Eligible = in-scope language call handled by a non-native agent. "
                "All data is synthetic.")
 

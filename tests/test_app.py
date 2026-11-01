@@ -64,10 +64,10 @@ def test_preset_sets_dates():
 
 def test_filters_survive_page_switches():
     """Selections persist across pages even for filters inside unopened popovers."""
-    at = run_page(None, teams=["Echo"], sites=["Charlotte"], languages=["Mandarin"])
+    at = run_page(None, teams=["Echo"], supervisors=["Cynthia Reyes"], languages=["Mandarin"])
     for page in PAGES[1:] + [PAGES[1]]:
         at.switch_page(page).run()
         assert not at.exception, at.exception
         assert at.session_state["teams"] == ["Echo"]
-        assert at.session_state["sites"] == ["Charlotte"]
-        assert "Teams: Echo · Sites: Charlotte · Languages: Mandarin" in at.caption[0].value
+        assert at.session_state["supervisors"] == ["Cynthia Reyes"]
+        assert "Teams: Echo · Supervisors: Cynthia Reyes · Languages: Mandarin" in at.caption[0].value
