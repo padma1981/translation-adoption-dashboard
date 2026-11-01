@@ -175,28 +175,97 @@ def kpi_summary(start_date=None, end_date=None, teams=None, supervisors=None, la
 
 
 def adoption_split(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
-                   con=None) -> pd.DataFrame:
+                   exclude_no_support=False, con=None) -> pd.DataFrame:
     """Tool-enabled eligible calls split into adopted (translation_tool path) and not,
-    with each slice's share. The shares are tool adoption and its complement."""
+    with each slice's share. The shares are tool adoption and its complement.
+    With exclude_no_support, no-support calls are left out, so the other slice is
+    the interpreter line and the share is tool / (tool + interpreter)."""
     k = kpi_summary(start_date, end_date, teams, supervisors, languages, con=con).iloc[0]
-    adopted, total = int(k["enabled_tool_calls"]), int(k["enabled_eligible_calls"])
-    df = pd.DataFrame({"slice": ["Adopted the tool", "Did not adopt"],
-                       "calls": [adopted, total - adopted]})
+    adopted = int(k["enabled_tool_calls"])
+    if exclude_no_support:
+        labels, total = ["Adopted the tool", "Used the interpreter"], adopted + int(
+            k["enabled_interpreter_calls"])
+    else:
+        labels, total = ["Adopted the tool", "Did not adopt"], int(k["enabled_eligible_calls"])
+    df = pd.DataFrame({"slice": labels, "calls": [adopted, total - adopted]})
     df["share"] = _ratio(df["calls"], np.full(len(df), total))
     return df
 
 
+def _enabled_counts(df, exclude_no_support):
+    """Add counted_calls (tool-enabled eligible calls in the denominator: tool +
+    interpreter when exclude_no_support, else all) and tool_adoption over it."""
+    df["counted_calls"] = (df["enabled_tool_calls"] + df["enabled_interpreter_calls"]
+                           if exclude_no_support else df["enabled_eligible_calls"])
+    df["tool_adoption"] = _ratio(df["enabled_tool_calls"], df["counted_calls"])
+    return df
+
+
+def overview_adoption(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                      grain=None, by=None, exclude_no_support=True, con=None) -> pd.DataFrame:
+    """Tool adoption among tool-enabled eligible calls per period and/or dimension.
+    With exclude_no_support (the Overview definition) adoption = tool / (tool + interpreter).
+    grain="month" lists every month from start_date to end_date, so months with no
+    tool-enabled calls (before rollout) appear with zero counts and a missing rate."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    keys = _keys(grain, by)
+    df = _sum_by("v_adoption_daily", keys,
+                 ["enabled_eligible_calls", "enabled_tool_calls", "enabled_interpreter_calls",
+                  "enabled_no_support_calls"], f, con)
+    if grain == "month" and not by and start_date is not None and end_date is not None:
+        months = pd.date_range(pd.Timestamp(start_date).replace(day=1), end_date, freq="MS").date
+        df = (df.set_index("month_start").reindex(months, fill_value=0)
+              .rename_axis("month_start").reset_index())
+    if by == "language" and not grain:   # config order, not alphabetical
+        order = {lang: i for i, lang in enumerate(cfg.IN_SCOPE_LANGUAGES)}
+        df = df.sort_values("language", key=lambda s: s.map(order)).reset_index(drop=True)
+    return _enabled_counts(df, exclude_no_support)
+
+
+def language_tool_use(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                      by_queue=False, exclude_no_support=True, con=None) -> pd.DataFrame:
+    """Per in-scope language (and queue if by_queue): all calls in that language, tool-enabled
+    eligible calls (counted_calls, without no support when exclude_no_support), tool and
+    interpreter calls, and tool % of counted calls. Every selected language gets a row;
+    a final Total row sums them."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    keys = ["language"] + (["queue"] if by_queue else [])
+    df = _sum_by("v_language_queue_daily", keys,
+                 ["language_calls", "enabled_eligible_calls", "enabled_tool_calls",
+                  "enabled_interpreter_calls", "enabled_no_support_calls"], f, con)
+    langs = [lang for lang in cfg.IN_SCOPE_LANGUAGES if languages is None or lang in languages]
+    if not by_queue:
+        df = df.set_index("language").reindex(langs, fill_value=0).rename_axis("language").reset_index()
+    df["language"] = pd.Categorical(df["language"], langs)   # config order, not alphabetical
+    if by_queue:
+        df["queue"] = pd.Categorical(df["queue"], cfg.QUEUES)
+    df = df.sort_values(keys).reset_index(drop=True)
+    df[keys] = df[keys].astype(str)
+    counts = [c for c in df.columns if c not in keys]
+    total = pd.DataFrame([{"language": "Total", **({"queue": "All queues"} if by_queue else {}),
+                           **df[counts].sum().astype("int64").to_dict()}])
+    df = pd.concat([df, total], ignore_index=True)
+    df[counts] = df[counts].astype("int64")
+    return _enabled_counts(df, exclude_no_support)
+
+
 def repeat_non_users(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
-                     min_missed=3, con=None) -> pd.DataFrame:
+                     min_missed=3, exclude_no_support=False, con=None) -> pd.DataFrame:
     """Agents with at least min_missed missed calls (tool-enabled eligible calls handled
-    with the interpreter line or no support), most missed first, with tool adoption."""
+    with the interpreter line or no support), most missed first, with tool adoption.
+    With exclude_no_support, missed calls are interpreter-line calls only and
+    enabled_eligible_calls / tool_adoption leave out no-support calls."""
     f = (start_date, end_date, teams, supervisors, languages)
     df = _sum_by("v_adoption_daily", ["agent_id", "agent_name", "team", "supervisor"],
                  ["enabled_eligible_calls", "enabled_tool_calls", "enabled_interpreter_calls",
                   "enabled_no_support_calls"], f, con)
     df = df.rename(columns={"enabled_interpreter_calls": "interpreter_calls",
                             "enabled_no_support_calls": "no_support_calls"})
-    df["missed_calls"] = df["interpreter_calls"] + df["no_support_calls"]
+    if exclude_no_support:
+        df["missed_calls"] = df["interpreter_calls"]
+        df["enabled_eligible_calls"] = df["enabled_tool_calls"] + df["interpreter_calls"]
+    else:
+        df["missed_calls"] = df["interpreter_calls"] + df["no_support_calls"]
     df["tool_adoption"] = _ratio(df["enabled_tool_calls"], df["enabled_eligible_calls"])
     df = df[df["missed_calls"] >= max(int(min_missed), 1)]
     return df.sort_values(["missed_calls", "agent_name", "agent_id"],
@@ -204,19 +273,20 @@ def repeat_non_users(start_date=None, end_date=None, teams=None, supervisors=Non
 
 
 def missed_call_details(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
-                        min_missed=3, con=None) -> pd.DataFrame:
+                        min_missed=3, exclude_no_support=False, con=None) -> pd.DataFrame:
     """One row per missed call of every agent listed by repeat_non_users, by agent then call time."""
     agents = repeat_non_users(start_date, end_date, teams, supervisors, languages, min_missed,
-                              con=con)["agent_id"].tolist()
+                              exclude_no_support, con=con)["agent_id"].tolist()
     where, params = _where(start_date, end_date, teams, supervisors, languages,
                            date_col="call_date", lang_col="caller_language")
+    paths = "('interpreter_line')" if exclude_no_support else "('interpreter_line', 'no_support')"
     return (con or get_connection()).execute(f"""
         select agent_id, agent_name, team, supervisor, call_id, call_start_ts, caller_language, queue,
                handling_path, tool_enabled_date, talk_sec, hold_sec, handle_sec,
                interpreter_minutes, interpreter_cost_usd, transferred, disposition, csat
         from v_call_enriched
         where expected_support = 'translation_tool'
-          and handling_path in ('interpreter_line', 'no_support')
+          and handling_path in {paths}
           and list_contains(?::varchar[], agent_id) and {where}
         order by agent_name, agent_id, call_start_ts""", [agents] + params).df()
 

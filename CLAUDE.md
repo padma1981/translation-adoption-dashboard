@@ -100,7 +100,8 @@ Views in sql/ are layered: base (v_agent, v_agent_language) -> session linking
 (v_session_linked) -> call fact (v_call_enriched) -> daily metric views at
 day x agent x language grain (v_adoption_daily, v_ramp_daily,
 v_interpreter_daily, v_cost_baseline, v_cost_avoided_daily, v_operational_daily,
-v_routing_daily) -> data quality views (v_dq_*). Metric views hold counts and
+v_routing_daily; v_language_queue_daily adds queue for the Overview language
+table) -> data quality views (v_dq_*). Metric views hold counts and
 sums only; src/metrics.py applies the filters, sums, and computes rates as
 ratios of sums, so rates are correct at any grain. Every metrics function takes
 start_date, end_date, teams, sites, languages (None = all) and returns a
@@ -150,6 +151,11 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
 ## Dashboard pages
 1. **Overview**: eligible calls, tool adoption, interpreter compliance, supported
    rate, trend over time, handling path mix, interpreter cost avoided
+   - Overview definition: every Overview chart and table leaves out eligible calls
+     with handling_path = 'no_support' (a caption under the donut says how many).
+     Overview adoption = tool / (tool + interpreter) among tool-enabled eligible
+     calls; Trends "missed calls" = interpreter-line calls only. Implemented with
+     exclude_no_support in src/metrics.py; other pages keep rules 8-10 as written.
 2. **Agents & Teams**: adoption by team, supervisor, site; agent leaderboard and
    low adopters; ramp curve by days since each agent's tool_enabled_date;
    footnote that team history isn't modeled (current team is used)

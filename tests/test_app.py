@@ -89,10 +89,14 @@ def test_overview_adoption_card():
     assert at.title[0].value == "Translation Tool Adoption"
     assert not [m for m in at.markdown if "2026" in m.value]   # no date range line
     assert not [c for c in at.caption if c.value.startswith("Teams:")]
-    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Trends"]
+    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Trends", "Adoption by Month",
+                                               "Calls vs Tool Use by Language"]
     line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
-    assert line.value == "**8,114** of **14,844** eligible calls adopted the tool"
+    assert line.value == "**8,114** of **12,836** eligible calls adopted the tool"   # no support excluded
     assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
+    assert "no language support" in line.help and "excluded" in line.help
+    assert any(c.value == "2,008 eligible calls had no language support and aren't counted"
+               for c in at.caption)
     assert not [c for c in at.caption if "Contact center calls" in c.value]
 
 
@@ -100,31 +104,32 @@ def test_overview_repeat_non_users():
     at = run_page(None)
     sub = [h for h in at.subheader if h.value == "Trends"][0]
     assert sub.help.startswith("Agents whose tool was enabled but who handled eligible calls")
+    assert "no language support are excluded" in sub.help
     slider = at.slider(key="min_missed")
-    assert (slider.value, slider.min, slider.max) == (3, 1, 93)   # max = most missed by one agent
+    assert (slider.value, slider.min, slider.max) == (3, 1, 74)   # max = most missed by one agent
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
-    assert line.value == "**143** agents with **6,728** missed calls (at least 3 each)"
+    assert line.value == "**143** agents with **4,722** missed calls (at least 3 each)"   # interpreter only
     assert any(c.value == "Showing 10 of 143 agents; the CSV includes all." for c in at.caption)
-    at.slider(key="min_missed").set_value(1).run()
+    at.slider(key="min_missed").set_value(40).run()
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
-    assert line.value == "**145** agents with **6,730** missed calls (at least 1 each)"
-    at.slider(key="min_missed").set_value(90).run()
+    assert line.value == "**48** agents with **2,326** missed calls (at least 40 each)"
+    at.slider(key="min_missed").set_value(60).run()
     assert not at.exception
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
-    assert line.value == "**2** agents with **184** missed calls (at least 90 each)"
+    assert line.value == "**3** agents with **202** missed calls (at least 60 each)"
     assert not [c for c in at.caption if c.value.startswith("Showing")]
 
 
 def test_overview_slider_clamps_to_new_max():
     """Narrowing the filters lowers the slider's max and pulls a higher value down to it."""
     at = run_page(None)
-    at.slider(key="min_missed").set_value(90).run()
+    at.slider(key="min_missed").set_value(70).run()
     at.session_state["teams"] = ["Echo"]
     at.session_state["languages"] = ["Mandarin"]
     at.run()
     assert not at.exception, at.exception
     slider = at.slider(key="min_missed")
-    assert slider.max < 90 and slider.value == slider.max
+    assert slider.max < 70 and slider.value == slider.max
 
 
 def test_overview_trends_chart_single_series():
@@ -134,6 +139,64 @@ def test_overview_trends_chart_single_series():
     assert [t.type for t in fig.data] == ["bar"]
     assert fig.data[0].marker.color == "#F4A261" and not fig.layout.showlegend
     assert list(fig.data[0].x[:3]) == sorted(fig.data[0].x, reverse=True)[:3]
+
+
+def month_bars(at):
+    import plotly.io as pio
+    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
+    return fig, dict(zip(fig.data[0].x, fig.data[0].y))
+
+
+def test_overview_adoption_by_month():
+    at = run_page(None)
+    fig, bars = month_bars(at)
+    assert list(bars) == ["Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"]
+    assert {k: round(v * 100, 1) for k, v in bars.items() if v is not None} == {
+        "May 2026": 38.8, "Jun 2026": 57.6, "Jul 2026": 57.8, "Aug 2026": 68.0, "Sep 2026": 72.2}
+    assert bars["Apr 2026"] is None
+    assert [a.text for a in fig.layout.annotations] == ["Before<br>rollout"]
+    month = at.selectbox(key="ov_month_pick")
+    assert month.options == ["All months", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"]
+
+
+def test_overview_month_drill_down_by_dropdown():
+    import plotly.io as pio
+    at = run_page(None)
+    at.selectbox(key="ov_month_pick").set_value("Jun 2026").run()
+    assert not at.exception, at.exception
+    assert at.session_state["ov_month"] == "Jun 2026"
+    assert any(c.value == "**Jun 2026** by language" for c in at.caption)
+    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
+    assert list(fig.data[0].x) == ["Spanish", "Portuguese", "Mandarin", "Vietnamese"]
+    at.button(key="month_back").click().run()
+    assert at.session_state["ov_month"] is None
+    assert at.selectbox(key="ov_month_pick").value == "All months"
+    assert len(month_bars(at)[1]) == 6
+
+
+def test_overview_month_drill_down_by_click():
+    """A click on a bar arrives as the chart's selection state."""
+    at = run_page(None)
+    at.session_state["month_chart"] = {"selection": {"points": [{"x": "Aug 2026"}],
+                                                     "point_indices": [4], "box": [], "lasso": []}}
+    at.run()
+    assert not at.exception, at.exception
+    assert at.session_state["ov_month"] == "Aug 2026"
+    assert at.selectbox(key="ov_month_pick").value == "Aug 2026"
+
+
+def test_overview_language_table():
+    at = run_page(None)
+    table = at.dataframe[0].value
+    assert table["Language"].tolist() == ["Spanish", "Portuguese", "Mandarin", "Vietnamese", "Total"]
+    assert table["Calls"].iloc[-1] == 45702
+    assert [round(v, 1) for v in table["Tool %"]] == [66.1, 68.7, 53.8, 52.9, 63.2]
+    at.toggle(key="ov_split_queue").set_value(True).run()
+    assert not at.exception, at.exception
+    table = at.dataframe[0].value
+    assert list(table.columns[:2]) == ["Language", "Queue"]
+    assert table["Queue"].tolist()[:4] == ["Billing", "Technical Support", "Account Services", "Sales"]
+    assert table["Calls"].iloc[-1] == 45702 and len(table) == 17
 
 
 # --- Sessions and caches carried over from an earlier version ---------------------------

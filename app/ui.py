@@ -307,9 +307,12 @@ def _describe(values, everything):
 
 
 def page_header(title, subtitle=None, require_data=True, centered=False,
-                show_filters=True) -> Filters:
-    """Title, active filter summary (unless show_filters is False), and stops the page
-    if filters are invalid or return no eligible calls. Returns the active Filters."""
+                show_filters=True, art=None) -> Filters:
+    """Optional decorative art (HTML/SVG) above the title, title, active filter summary
+    (unless show_filters is False), and stops the page if filters are invalid or
+    return no eligible calls. Returns the active Filters."""
+    if art:
+        st.html(art)
     st.title(title, text_alignment="center" if centered else "left")
     f = st.session_state.filters
     if show_filters:

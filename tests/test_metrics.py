@@ -300,6 +300,54 @@ def test_missed_call_details_lists_every_missed_call_of_listed_agents():
     assert len(calls) == summary["missed_calls"].sum()
 
 
+def test_overview_definition_excludes_no_support():
+    """Overview adoption = tool / (tool + interpreter) among tool-enabled eligible calls.
+    Enabled: R1-R3 tool, R4 and N3 interpreter, N1 and N2 no support (left out)."""
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    split = m.adoption_split(exclude_no_support=True, con=con).set_index("slice")
+    assert split["calls"].to_dict() == {"Adopted the tool": 3, "Used the interpreter": 2}
+    assert split.loc["Adopted the tool", "share"] == pytest.approx(0.6)
+    assert m.adoption_split(con=con).set_index("slice")["calls"].to_dict() == {
+        "Adopted the tool": 3, "Did not adopt": 4}   # other pages keep the old definition
+    df = m.repeat_non_users(min_missed=1, exclude_no_support=True, con=con).set_index("agent_id")
+    assert df["missed_calls"].to_dict() == {"CON": 1, "MIS": 1}   # interpreter only
+    assert (df.loc["CON", "enabled_eligible_calls"], df.loc["CON", "tool_adoption"]) == (2, 0.5)
+    calls = m.missed_call_details(min_missed=1, exclude_no_support=True, con=con)
+    assert sorted(calls["call_id"]) == ["N3", "R4"]
+    assert set(calls["handling_path"]) == {"interpreter_line"}
+
+
+def test_overview_adoption_by_month_and_language():
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    months = m.overview_adoption(start_date="2026-04-15", end_date="2026-07-31", grain="month", con=con)
+    assert [str(d) for d in months["month_start"]] == ["2026-04-01", "2026-05-01", "2026-06-01",
+                                                       "2026-07-01"]   # every month in range
+    assert months["counted_calls"].tolist() == [0, 0, 5, 0]
+    assert months["tool_adoption"].isna().tolist() == [True, True, False, True]
+    assert months["tool_adoption"].iloc[2] == pytest.approx(0.6)
+    langs = m.overview_adoption(by="language", con=con).set_index("language")
+    assert langs["counted_calls"].to_dict() == {"Mandarin": 0, "Spanish": 4, "Vietnamese": 1}
+    assert np.isnan(langs.loc["Mandarin", "tool_adoption"])   # N2 had no support only
+    assert m.overview_adoption(by="language", exclude_no_support=False, con=con).set_index(
+        "language").loc["Spanish", "counted_calls"] == 5
+
+
+def test_language_tool_use_table():
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    df = m.language_tool_use(con=con).set_index("language")
+    assert df.index.tolist() == cfg.IN_SCOPE_LANGUAGES + ["Total"]
+    assert df["language_calls"].to_dict() == {"Spanish": 7, "Portuguese": 0, "Mandarin": 2,
+                                              "Vietnamese": 1, "Total": 10}   # natives included
+    assert df["counted_calls"].to_dict() == {"Spanish": 4, "Portuguese": 0, "Mandarin": 0,
+                                             "Vietnamese": 1, "Total": 5}
+    assert (df.loc["Total", "enabled_tool_calls"], df.loc["Total", "enabled_interpreter_calls"]) == (3, 2)
+    assert df.loc["Total", "tool_adoption"] == pytest.approx(0.6)
+    assert m.language_tool_use(languages=["Spanish"], con=con)["language"].tolist() == ["Spanish", "Total"]
+    queues = m.language_tool_use(by_queue=True, con=con)
+    assert queues[["language", "queue"]].values.tolist() == [
+        ["Spanish", "Billing"], ["Mandarin", "Billing"], ["Vietnamese", "Billing"], ["Total", "All queues"]]
+
+
 def test_cost_avoided_formula():
     pre = [  # April = before the first rollout (2026-05-01)
         call("P1", "FLU", "Spanish", "2026-04-10 09:00"),
@@ -359,6 +407,12 @@ FUNCTIONS = {
     "adoption_split": {},
     "repeat_non_users": {"min_missed": 1},
     "missed_call_details": {"min_missed": 1},
+    "repeat_non_users_interpreter_only": {"min_missed": 1, "exclude_no_support": True,
+                                          "fn": "repeat_non_users"},
+    "overview_adoption_month": {"grain": "month", "fn": "overview_adoption"},
+    "overview_adoption_language": {"by": "language", "fn": "overview_adoption"},
+    "language_tool_use": {},
+    "language_tool_use_queue": {"by_queue": True, "fn": "language_tool_use"},
     "adoption_trend_week": {"grain": "week"},
     "adoption_trend_month_team": {"grain": "month", "by": "team", "fn": "adoption_trend"},
     "adoption_by_supervisor": {"by": "supervisor", "fn": "adoption_by"},
@@ -418,7 +472,8 @@ def totals(df):
 @pytest.mark.parametrize("name", list(FUNCTIONS))
 def test_filter_excluding_everything_gives_nothing(filter_con, name, dim):
     t = totals(run(name, filter_con, **EXCLUDE[dim]))
-    if name in ("kpi_summary", "adoption_split", "dq_summary"):   # fixed rows
+    if name in ("kpi_summary", "adoption_split", "dq_summary", "overview_adoption_month",
+                "language_tool_use", "language_tool_use_queue"):   # fixed rows (every month, language)
         t = t.drop("rows")
     if name == "dq_summary":
         assert (run(name, filter_con, **EXCLUDE[dim])["value"] == 0).all()
