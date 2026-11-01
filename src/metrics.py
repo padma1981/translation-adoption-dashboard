@@ -143,6 +143,16 @@ def filter_options(con=None) -> dict:
     }
 
 
+def team_rollout_dates(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+                       con=None) -> pd.DataFrame:
+    """Tool rollout date per team (for chart markers), limited to the selected teams/sites.
+    Dates and languages are accepted for a uniform signature but not applied."""
+    where, params = _where(None, None, teams, sites, None)
+    return (con or get_connection()).execute(
+        f"select team, site, rollout_date from dim_team where {where} order by rollout_date, team",
+        params).df()
+
+
 # --- Adoption ----------------------------------------------------------------
 
 def kpi_summary(start_date=None, end_date=None, teams=None, sites=None, languages=None,
@@ -183,6 +193,31 @@ def agent_leaderboard(start_date=None, end_date=None, teams=None, sites=None, la
                           ascending=[False, False]).reset_index(drop=True)
 
 
+def low_adopters(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+                 min_enabled_calls=10, con=None) -> pd.DataFrame:
+    """Agents with at least min_enabled_calls tool-enabled eligible calls, lowest adopters first."""
+    df = adoption_by(start_date, end_date, teams, sites, languages, by="agent", con=con)
+    df = df[df["enabled_eligible_calls"] >= min_enabled_calls]
+    return df.sort_values(["tool_adoption", "enabled_eligible_calls"],
+                          ascending=[True, False]).reset_index(drop=True)
+
+
+def handling_path_trend(start_date=None, end_date=None, teams=None, sites=None, languages=None,
+                        grain="week", con=None) -> pd.DataFrame:
+    """Eligible calls per period x handling path (long format), with share of the period."""
+    f = (start_date, end_date, teams, sites, languages)
+    period = GRAINS[grain]
+    wide = _sum_by("v_adoption_daily", [period], ["tool_calls", "interpreter_calls",
+                                                  "no_support_calls"], f, con)
+    df = wide.melt(id_vars=period, var_name="handling_path", value_name="calls")
+    df["handling_path"] = df["handling_path"].map({"tool_calls": "translation_tool",
+                                                   "interpreter_calls": "interpreter_line",
+                                                   "no_support_calls": "no_support"})
+    df["calls"] = df["calls"].astype("int64")
+    df["share_of_period"] = _ratio(df["calls"], df.groupby(period)["calls"].transform("sum"))
+    return df.sort_values([period, "handling_path"], ascending=[True, False]).reset_index(drop=True)
+
+
 def handling_path_mix(start_date=None, end_date=None, teams=None, sites=None, languages=None,
                       con=None) -> pd.DataFrame:
     """Eligible calls by expected_support x handling_path, with share of eligible calls."""
@@ -197,16 +232,18 @@ def handling_path_mix(start_date=None, end_date=None, teams=None, sites=None, la
 
 
 def ramp_curve(start_date=None, end_date=None, teams=None, sites=None, languages=None,
-               bucket_days=7, con=None) -> pd.DataFrame:
-    """Tool adoption by days since each agent's own tool_enabled_date, in buckets."""
+               bucket_days=7, by=None, con=None) -> pd.DataFrame:
+    """Tool adoption by days since each agent's own tool_enabled_date, in buckets,
+    optionally split by a dimension (e.g. by="team")."""
     where, params = _where(start_date, end_date, teams, sites, languages)
+    dims = "".join(f", {k}" for k in _keys(None, by))
     df = (con or get_connection()).execute(f"""
-        select floor(days_since_enabled / {int(bucket_days)}) * {int(bucket_days)} as days_since_enabled,
+        select floor(days_since_enabled / {int(bucket_days)}) * {int(bucket_days)} as days_since_enabled{dims},
                count(distinct agent_id) as agents,
                sum(enabled_eligible_calls)::bigint as enabled_eligible_calls,
                sum(enabled_tool_calls)::bigint as enabled_tool_calls
         from v_ramp_daily where {where}
-        group by 1 order by 1""", params).df()
+        group by all order by all""", params).df()
     df["days_since_enabled"] = df["days_since_enabled"].astype(int)
     df["tool_adoption"] = _ratio(df["enabled_tool_calls"], df["enabled_eligible_calls"])
     return df

@@ -226,6 +226,32 @@ def test_adoption_compliance_supported_arithmetic():
                     .loc["OFF", "tool_adoption"])
 
 
+def test_handling_path_trend_matches_mix():
+    con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
+    trend = m.handling_path_trend(grain="week", con=con)
+    assert set(trend["handling_path"]) == {"translation_tool", "interpreter_line", "no_support"}
+    by_path = trend.groupby("handling_path")["calls"].sum().to_dict()
+    mix = m.handling_path_mix(con=con).groupby("handling_path")["calls"].sum().to_dict()
+    assert {k: v for k, v in by_path.items() if v} == mix
+    assert trend.groupby("week_start")["share_of_period"].sum().tolist() == pytest.approx([1.0])
+
+
+def test_low_adopters_is_leaderboard_reversed():
+    con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
+    best = m.agent_leaderboard(min_enabled_calls=1, con=con)
+    worst = m.low_adopters(min_enabled_calls=1, con=con)
+    assert worst["tool_adoption"].is_monotonic_increasing
+    assert set(best["agent_id"]) == set(worst["agent_id"])
+    assert m.low_adopters(min_enabled_calls=99, con=con).empty
+
+
+def test_team_rollout_dates_respect_team_and_site():
+    con = m.connect(tables=build_tables(RATE_CALLS, RATE_SESSIONS, RATE_INTERP))
+    assert len(m.team_rollout_dates(con=con)) == len(con.execute("from dim_team").df())
+    assert m.team_rollout_dates(teams=["T1"], con=con)["team"].tolist() == ["T1"]
+    assert m.team_rollout_dates(teams=["nobody"], con=con).empty
+
+
 def test_cost_avoided_formula():
     pre = [  # April = before the first rollout (2026-05-01)
         call("P1", "FLU", "Spanish", "2026-04-10 09:00"),
@@ -289,8 +315,11 @@ FUNCTIONS = {
     "adoption_by_language": {"by": "language", "fn": "adoption_by"},
     "adoption_by_agent": {"by": "agent", "fn": "adoption_by"},
     "agent_leaderboard": {"min_enabled_calls": 0},
+    "low_adopters": {"min_enabled_calls": 0},
     "handling_path_mix": {},
+    "handling_path_trend": {"grain": "week"},
     "ramp_curve": {"bucket_days": 7},
+    "ramp_curve_team": {"bucket_days": 7, "by": "team", "fn": "ramp_curve"},
     "routing_mix": {"grain": "day"},
     "language_summary": {},
     "operational_by_path": {"by_language": True},
