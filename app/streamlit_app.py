@@ -60,11 +60,14 @@ REPEAT_HELP = ("Agents whose tool was enabled but who handled eligible calls wit
 
 SECTION_CSS = """
 <style>
-/* Only the Plotly charts get a border; headings, sliders and buttons sit on the page. */
-.st-key-adoption_section [data-testid="stPlotlyChart"],
-.st-key-repeat_section [data-testid="stPlotlyChart"] {
-  border: 1px solid #CBD5E1; border-radius: 12px; padding: 8px; box-sizing: border-box;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+/* Card = the element container that holds each Plotly chart (not the whole section). */
+.st-key-adoption_section [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]),
+.st-key-repeat_section [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]) {
+  background: #FFFFFF;
+  border: 1px solid #94A3B8; border-radius: 14px;
+  padding: 12px 12px 6px; box-sizing: border-box;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.10);
+  overflow: visible; margin-bottom: 14px;
 }
 </style>
 """
@@ -72,6 +75,8 @@ DONUT_HEIGHT = 280
 MAX_AGENT_HEIGHT = 380
 TOP_AGENTS = 15
 MISSED_COLOR = "#F4A261"
+ADOPTED_COLOR = "#0F9D8A"      # teal
+NOT_ADOPTED_COLOR = "#F4A261"  # soft orange
 DEFAULT_MIN_MISSED = 3
 
 
@@ -79,7 +84,7 @@ def adoption_donut(split, share):
     """Two-slice donut with the adoption % in the center."""
     fig = go.Figure(go.Pie(
         labels=split["slice"], values=split["calls"], hole=0.62, sort=False, direction="clockwise",
-        marker=dict(colors=[ui.PATH_COLORS["translation_tool"], ui.NOT_ADOPTED_COLOR],
+        marker=dict(colors=[ADOPTED_COLOR, NOT_ADOPTED_COLOR],
                     line=dict(color="white", width=2)),
         textinfo="none", customdata=split["share"],
         hovertemplate="%{label}<br>%{value:,} calls (%{customdata:.1%})<extra></extra>"))
