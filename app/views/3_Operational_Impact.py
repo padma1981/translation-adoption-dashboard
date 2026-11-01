@@ -73,6 +73,6 @@ with st.expander("Table view"):
     st.dataframe(t.rename(columns={"language": "Language", "calls": "Calls",
                                    "avg_handle_sec": "Handle (min)", "avg_hold_sec": "Hold (sec)",
                                    "transfer_rate": "Transfers", "avg_csat": "CSAT"}),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
 
 ui.footnote()

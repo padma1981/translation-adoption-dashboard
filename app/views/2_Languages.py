@@ -39,7 +39,7 @@ st.dataframe(table.rename(columns={
     "language": "Language", "in_scope_calls": "Calls", "eligible_calls": "Eligible",
     "native_share": "Native share", "overflow_rate": "Overflow", "tool_adoption": "Adoption",
     "interpreter_compliance": "Interp. compliance", "supported_rate": "Supported"}),
-    hide_index=True, use_container_width=True)
+    hide_index=True, width="stretch")
 
 st.subheader("Routing: native agent vs overflow")
 st.caption("In-scope calls go to a native speaker when one is free; the rest overflow to a "

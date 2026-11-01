@@ -1,7 +1,7 @@
 """Entry point and Overview page.
 
 Run with: streamlit run app/streamlit_app.py
-The sidebar filters are drawn here once, so they carry across every page.
+The top menu and filter bar are drawn here once, so filters carry across every page.
 """
 
 from pathlib import Path
@@ -10,7 +10,8 @@ import sys
 import plotly.express as px
 import streamlit as st
 
-st.set_page_config(page_title="Translation Tool Adoption", page_icon="🌐", layout="wide")
+st.set_page_config(page_title="Translation Tool Adoption", page_icon="🌐", layout="wide",
+                   initial_sidebar_state="collapsed")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # so pages can `import ui`
 import ui  # noqa: E402
@@ -74,12 +75,12 @@ def overview():
 
 pages = [
     st.Page(overview, title="Overview", icon="📊", default=True),
-    st.Page("pages/1_Agents_and_Teams.py", title="Agents & Teams", icon="👥"),
-    st.Page("pages/2_Languages.py", title="Languages", icon="🗣️"),
-    st.Page("pages/3_Operational_Impact.py", title="Operational Impact", icon="⏱️"),
-    st.Page("pages/4_Cost.py", title="Cost", icon="💵"),
-    st.Page("pages/5_Data_Quality.py", title="Data Quality", icon="🧪"),
+    st.Page("views/1_Agents_and_Teams.py", title="Agents & Teams", icon="👥"),
+    st.Page("views/2_Languages.py", title="Languages", icon="🗣️"),
+    st.Page("views/3_Operational_Impact.py", title="Operational Impact", icon="⏱️"),
+    st.Page("views/4_Cost.py", title="Cost", icon="💵"),
+    st.Page("views/5_Data_Quality.py", title="Data Quality", icon="🧪"),
 ]
-page = st.navigation(pages)
-ui.render_sidebar()
+page = st.navigation(pages, position="top")
+ui.render_filter_bar()
 page.run()

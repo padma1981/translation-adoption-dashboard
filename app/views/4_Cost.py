@@ -88,6 +88,6 @@ if not by_lang.empty:
         st.dataframe(t.rename(columns={
             "language": "Language", "tool_calls": "Tool calls", "interpreter_share": "Pre-rollout interp. share",
             "avg_interpreter_minutes": "Avg interp. min", "avoided_usd_per_tool_call": "$ per tool call",
-            "cost_avoided_usd": "Cost avoided"}), hide_index=True, use_container_width=True)
+            "cost_avoided_usd": "Cost avoided"}), hide_index=True, width="stretch")
 
 ui.footnote()

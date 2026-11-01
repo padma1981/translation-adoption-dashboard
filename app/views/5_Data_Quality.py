@@ -66,7 +66,7 @@ with left:
                             "tool_enabled_date"]].rename(columns={
                                 "agent_name": "Agent", "team": "Team", "session_start_ts": "Session start",
                                 "source_language": "Language", "tool_enabled_date": "Enabled"}),
-                     hide_index=True, use_container_width=True, height=260)
+                     hide_index=True, width="stretch", height=260)
 with right:
     st.markdown("**Agents with no language records**")
     missing = ui.q(metrics.dq_agents_without_language_records, f)
@@ -75,13 +75,13 @@ with right:
     else:
         st.dataframe(missing[["agent_id", "agent_name", "team", "site"]].rename(columns={
             "agent_id": "Agent ID", "agent_name": "Agent", "team": "Team", "site": "Site"}),
-            hide_index=True, use_container_width=True, height=260)
+            hide_index=True, width="stretch", height=260)
 
 st.markdown("**Orphan interpreter rows** (not filtered)")
 orphans = ui.q(metrics.dq_orphan_interpreter_rows, f)
 if orphans.empty:
     st.success("Every interpreter row matches a call.")
 else:
-    st.dataframe(orphans, hide_index=True, use_container_width=True, height=220)
+    st.dataframe(orphans, hide_index=True, width="stretch", height=220)
 
 ui.footnote()

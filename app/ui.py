@@ -1,4 +1,4 @@
-"""Shared dashboard pieces: cached metric calls, sidebar filters, page header,
+"""Shared dashboard pieces: cached metric calls, global filter bar, page header,
 colors and number formatting. No metric logic lives here."""
 
 from dataclasses import dataclass
@@ -122,14 +122,20 @@ def preset_range(preset, opts):
     return max(starts[preset], lo), hi
 
 
-def _apply_preset():
-    if st.session_state.preset != "Custom":
-        st.session_state.start_date, st.session_state.end_date = preset_range(
-            st.session_state.preset, options())
+# Filter values live in these session_state keys. Widgets use separate "_w_"
+# keys that are refreshed from them on every run, because Streamlit can drop a
+# widget's own state (e.g. inside an unopened popover) when the page changes.
+FILTER_KEYS = ["preset", "start_date", "end_date", "teams", "sites", "languages"]
 
 
-def _mark_custom():
-    st.session_state.preset = "Custom"
+def _widget_changed(key):
+    """Copy a widget's new value into its filter key, then apply side effects."""
+    ss = st.session_state
+    ss[key] = ss[f"_w_{key}"]
+    if key == "preset" and ss.preset != "Custom":
+        ss.start_date, ss.end_date = preset_range(ss.preset, options())
+    elif key in ("start_date", "end_date"):
+        ss.preset = "Custom"
 
 
 def _reset():
@@ -140,29 +146,66 @@ def _reset():
         st.session_state[key] = list(opts[values])
 
 
-def render_sidebar():
-    """Draw the global filters and store the active Filters in session_state.
+FILTER_BAR_CSS = """
+<style>
+/* No sidebar on a laptop: the menu is on top and filters live in this bar.
+   On a phone Streamlit moves the menu into a slide-out panel, so leave it. */
+.st-key-filter_bar { padding: 0.5rem 0.75rem 0.6rem; }
+/* Phone: two controls per row instead of one tall stack; date range full width. */
+@media (max-width: 640px) {
+  .st-key-filter_bar [data-testid="stHorizontalBlock"] { flex-flow: row wrap; gap: 0.5rem; }
+  .st-key-filter_bar [data-testid="stColumn"] { flex: 1 1 calc(50% - 0.5rem) !important;
+      min-width: calc(50% - 0.5rem) !important; width: calc(50% - 0.5rem) !important; }
+  .st-key-filter_bar [data-testid="stColumn"]:first-child { flex-basis: 100% !important;
+      min-width: 100% !important; width: 100% !important; }
+}
+.st-key-filter_bar [data-testid="stWidgetLabel"] { min-height: 1.1rem; }
+.st-key-filter_bar [data-testid="stPopover"] button p { white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+</style>
+"""
 
-    Rendered once by the entry point, so the selections carry across pages.
+
+def _summary(label, selected, everything):
+    """Popover button text, e.g. 'Team: All', 'Team: Echo', 'Team: 2 of 6'."""
+    if set(selected) == set(everything):
+        value = "All"
+    elif len(selected) == 1:
+        value = selected[0]
+    else:
+        value = f"{len(selected)} of {len(everything)}" if selected else "None"
+    return f"{label}: {value}"
+
+
+def render_filter_bar():
+    """Draw the global filter bar and store the active Filters in session_state.
+
+    Rendered once by the entry point above every page, so selections carry
+    across pages. One row on a laptop; Streamlit stacks the columns on a phone.
     """
     opts = options()
     ss = st.session_state
     if "preset" not in ss:
         _reset()
 
-    sb = st.sidebar
-    sb.header("Filters")
-    sb.selectbox("Date range", PRESETS, key="preset", on_change=_apply_preset)
-    c1, c2 = sb.columns(2)
-    kw = dict(min_value=opts["min_date"], max_value=opts["max_date"], format="YYYY-MM-DD",
-              on_change=_mark_custom)
-    c1.date_input("Start", key="start_date", **kw)
-    c2.date_input("End", key="end_date", **kw)
-    sb.caption(f"Presets count back from the last day of data ({opts['max_date']:%b %d, %Y}).")
-    sb.multiselect("Team", opts["teams"], key="teams", placeholder="Choose teams")
-    sb.multiselect("Site", opts["sites"], key="sites", placeholder="Choose sites")
-    sb.multiselect("Language", opts["languages"], key="languages", placeholder="Choose languages")
-    sb.button("Reset filters", on_click=_reset, use_container_width=True)
+    for key in FILTER_KEYS:
+        ss[f"_w_{key}"] = ss[key]
+    widget = lambda key: dict(key=f"_w_{key}", on_change=_widget_changed, args=(key,))  # noqa: E731
+
+    st.html(FILTER_BAR_CSS)
+    with st.container(border=True, key="filter_bar"):
+        cols = st.columns([1.3, 1.1, 1.1, 1, 1, 1.15, 0.8], gap="small", vertical_alignment="bottom")
+        cols[0].selectbox("Date range", PRESETS, **widget("preset"),
+                          help=f"Presets count back from the last day of data "
+                               f"({opts['max_date']:%b %d, %Y}).")
+        kw = dict(min_value=opts["min_date"], max_value=opts["max_date"], format="YYYY-MM-DD")
+        cols[1].date_input("Start", **widget("start_date"), **kw)
+        cols[2].date_input("End", **widget("end_date"), **kw)
+        for col, key, label in ((cols[3], "teams", "Team"), (cols[4], "sites", "Site"),
+                                (cols[5], "languages", "Language")):
+            with col.popover(_summary(label, ss[key], opts[key]), width="stretch"):
+                st.multiselect(label, opts[key], **widget(key), placeholder=f"Choose {key}")
+        cols[6].button("Reset filters", on_click=_reset, width="stretch")
 
     errors = []
     if ss.start_date > ss.end_date:
@@ -170,8 +213,6 @@ def render_sidebar():
     for key, label in (("teams", "team"), ("sites", "site"), ("languages", "language")):
         if not ss[key]:
             errors.append(f"Select at least one {label}.")
-    for e in errors:
-        sb.error(e)
 
     all_or = lambda key: None if set(ss[key]) == set(opts[key]) else tuple(sorted(ss[key]))  # noqa: E731
     ss.filters = Filters(ss.start_date, ss.end_date, all_or("teams"), all_or("sites"),
@@ -214,7 +255,7 @@ def page_header(title, subtitle=None, require_data=True) -> Filters:
 
 def no_data(what="these filters"):
     st.info(f"No data for {what}. Try a wider date range or add teams, sites or languages "
-            "in the sidebar.", icon="🔎")
+            "in the filter bar.", icon="🔎")
 
 
 def footnote():
@@ -250,6 +291,10 @@ def style(fig, height=380, pct_axis=False, legend=True):
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.18)", zeroline=False, title_text="")
     if pct_axis:
         fig.update_yaxes(tickformat=".0%", rangemode="tozero")
+    if fig.layout.barmode != "group":
+        # Plotly Express gives each color its own offset group, which newer
+        # plotly.js places side by side; one shared group keeps bars stacked/centered.
+        fig.update_traces(offsetgroup="shared", selector=dict(type="bar"))
     return fig
 
 
@@ -269,7 +314,7 @@ def mark_dates(fig, rows, label_col, date_col, start=None, end=None):
 
 
 def show(fig):
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def path_label(df, col="handling_path"):

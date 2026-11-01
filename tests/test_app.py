@@ -1,13 +1,14 @@
 """Smoke tests: every dashboard page renders without errors under default and narrowed filters."""
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-ENTRY = "app/streamlit_app.py"
-PAGES = [None, "pages/1_Agents_and_Teams.py", "pages/2_Languages.py",
-         "pages/3_Operational_Impact.py", "pages/4_Cost.py", "pages/5_Data_Quality.py"]
+ENTRY = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
+PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py",
+         "views/3_Operational_Impact.py", "views/4_Cost.py", "views/5_Data_Quality.py"]
 
 
 def run_page(page, **state):
@@ -54,8 +55,19 @@ def test_empty_selection_shows_friendly_message():
 def test_preset_sets_dates():
     at = AppTest.from_file(ENTRY, default_timeout=120)
     at.run()
-    at.selectbox(key="preset").set_value("Last 7 days").run()
+    at.selectbox(key="_w_preset").set_value("Last 7 days").run()
     assert at.session_state["start_date"] == date(2026, 9, 24)
     assert at.session_state["end_date"] == date(2026, 9, 30)
-    at.selectbox(key="preset").set_value("Since rollout").run()
+    at.selectbox(key="_w_preset").set_value("Since rollout").run()
     assert at.session_state["start_date"] == date(2026, 5, 1)
+
+
+def test_filters_survive_page_switches():
+    """Selections persist across pages even for filters inside unopened popovers."""
+    at = run_page(None, teams=["Echo"], sites=["Charlotte"], languages=["Mandarin"])
+    for page in PAGES[1:] + [PAGES[1]]:
+        at.switch_page(page).run()
+        assert not at.exception, at.exception
+        assert at.session_state["teams"] == ["Echo"]
+        assert at.session_state["sites"] == ["Charlotte"]
+        assert "Teams: Echo · Sites: Charlotte · Languages: Mandarin" in at.caption[0].value

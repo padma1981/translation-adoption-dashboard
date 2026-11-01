@@ -77,7 +77,7 @@ def agent_table(df):
         return
     out = df.head(10)[list(cols)].rename(columns=cols)
     out["Adoption"] = out["Adoption"] * 100
-    st.dataframe(out, hide_index=True, use_container_width=True, column_config=config)
+    st.dataframe(out, hide_index=True, width="stretch", column_config=config)
 
 
 left, right = st.columns(2)
