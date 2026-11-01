@@ -60,17 +60,19 @@ REPEAT_HELP = ("Agents whose tool was enabled but who handled eligible calls wit
 
 SECTION_CSS = """
 <style>
-/* Only the charts get a border; headings, summaries and buttons sit on the page. */
+/* Only the Plotly charts get a border; headings, sliders and buttons sit on the page. */
 .st-key-adoption_section [data-testid="stPlotlyChart"],
 .st-key-repeat_section [data-testid="stPlotlyChart"] {
-  border: 1px solid #CBD5E1; border-radius: 10px; padding: 6px; box-sizing: border-box;
+  border: 1px solid #CBD5E1; border-radius: 12px; padding: 8px; box-sizing: border-box;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
 }
 </style>
 """
 DONUT_HEIGHT = 280
 MAX_AGENT_HEIGHT = 380
 TOP_AGENTS = 15
-MISSED_COLORS = {"interpreter_calls": "#F4A261", "no_support_calls": "#E76F51"}
+MISSED_COLOR = "#F4A261"
+DEFAULT_MIN_MISSED = 3
 
 
 def adoption_donut(split, share):
@@ -92,39 +94,44 @@ def adoption_donut(split, share):
 
 
 def repeat_non_users_chart(agents):
-    """Horizontal stacked bars of missed calls per agent, most missed at the top,
-    with each agent's adoption % at the end of the bar."""
+    """Horizontal bars of total missed calls per agent, most missed at the top,
+    with the count at the end of each bar."""
     labels = agents["agent_name"] + " (" + agents["team"] + ")"
-    custom = agents[["agent_name", "team", "supervisor", "interpreter_calls", "no_support_calls",
-                     "missed_calls", "enabled_eligible_calls", "tool_adoption"]]
-    hover = ("<b>%{customdata[0]}</b><br>Team: %{customdata[1]}<br>Supervisor: %{customdata[2]}<br>"
-             "Missed calls: %{customdata[5]:,} (interpreter %{customdata[3]:,}, "
-             "no support %{customdata[4]:,})<br>Tool-enabled eligible calls: %{customdata[6]:,}<br>"
-             "Adoption: %{customdata[7]:.1%}<extra></extra>")
-    fig = go.Figure()
-    for col, name in (("interpreter_calls", "Interpreter line"), ("no_support_calls", "No support")):
-        fig.add_bar(y=labels, x=agents[col], name=name, orientation="h", customdata=custom,
-                    marker=dict(color=MISSED_COLORS[col], line=dict(width=0)), hovertemplate=hover)
-    fig.add_scatter(y=labels, x=agents["missed_calls"], mode="text", showlegend=False,
-                    text=[f" {a:.0%} adoption" for a in agents["tool_adoption"]],
-                    textposition="middle right", textfont=dict(size=11, color="#52514e"),
-                    hoverinfo="skip")
+    custom = agents[["agent_name", "team", "supervisor", "missed_calls", "enabled_eligible_calls",
+                     "tool_adoption"]]
+    fig = go.Figure(go.Bar(
+        y=labels, x=agents["missed_calls"], orientation="h", customdata=custom,
+        marker=dict(color=MISSED_COLOR, line=dict(width=0)),
+        text=agents["missed_calls"], texttemplate="%{text:,}", textposition="outside",
+        textfont=dict(size=11, color="#52514e"), cliponaxis=False,
+        hovertemplate=("<b>%{customdata[0]}</b><br>Team: %{customdata[1]}<br>"
+                       "Supervisor: %{customdata[2]}<br>Missed calls: %{customdata[3]:,}<br>"
+                       "Tool-enabled eligible calls: %{customdata[4]:,}<br>"
+                       "Adoption: %{customdata[5]:.1%}<extra></extra>")))
     height = max(DONUT_HEIGHT, min(MAX_AGENT_HEIGHT, 14 * len(agents) + 120))
     fig.update_layout(
-        barmode="stack", height=height, bargap=0.3, hovermode="closest",
+        height=height, bargap=0.3, hovermode="closest", showlegend=False,
         margin=dict(l=10, r=10, t=10, b=10), font=dict(size=12),
-        legend=dict(orientation="h", x=0, xanchor="left", y=-0.2, yanchor="top", title=None,
-                    traceorder="normal"),
         xaxis=dict(title_text="Missed calls", gridcolor="rgba(31,41,55,0.10)", zeroline=False,
-                   range=[0, agents["missed_calls"].max() * 1.35]),
+                   range=[0, agents["missed_calls"].max() * 1.15]),
         yaxis=dict(autorange="reversed", showgrid=False, automargin=True))
     return fig
+
+
+def min_missed_slider(max_missed):
+    """Slider for the minimum missed calls, kept within 1..max_missed as filters change."""
+    if max_missed <= 1:   # a slider needs min < max
+        return 1
+    current = st.session_state.get("min_missed", DEFAULT_MIN_MISSED)
+    st.session_state.min_missed = min(max(int(current), 1), max_missed)
+    return st.slider("Minimum missed calls", min_value=1, max_value=max_missed, step=1,
+                     key="min_missed")
 
 
 def overview():
     """Adoption donut and agents repeatedly not using the tool, each with a CSV
     download for the active filters."""
-    f = ui.page_header("Translation Tool Adoption")
+    f = ui.page_header("Translation Tool Adoption", centered=True, show_filters=False)
     split = ui.q(metrics.adoption_split, f)
     total = int(split["calls"].sum())
     if total == 0:
@@ -148,13 +155,15 @@ def overview():
                            "text/csv", icon=":material/download:")
 
     with right, st.container(key="repeat_section"):
-        st.subheader("Agents Repeatedly Not Using the Tool", anchor=False, help=REPEAT_HELP)
-        min_missed = st.columns([0.4, 0.6])[0].number_input(
-            "Minimum missed calls", min_value=1, value=3, step=1, key="min_missed")
-        agents = ui.q(metrics.repeat_non_users, f, min_missed=int(min_missed))
-        if agents.empty:
-            st.info(f"No agents have {min_missed} or more missed calls for these filters.", icon="🎉")
+        all_missed = ui.q(metrics.repeat_non_users, f, min_missed=1)
+        heading, control = st.columns([0.45, 0.55], vertical_alignment="center")
+        heading.subheader("Trends", anchor=False, help=REPEAT_HELP)
+        if all_missed.empty:
+            st.info("No tool-enabled agent missed the tool for these filters.", icon="🎉")
         else:
+            with control:
+                min_missed = min_missed_slider(int(all_missed["missed_calls"].max()))
+            agents = all_missed[all_missed["missed_calls"] >= min_missed].reset_index(drop=True)
             ui.show(repeat_non_users_chart(agents.head(TOP_AGENTS)))
             st.markdown(f"**{len(agents):,}** agents with **{int(agents['missed_calls'].sum()):,}** "
                         f"missed calls (at least {min_missed} each)")

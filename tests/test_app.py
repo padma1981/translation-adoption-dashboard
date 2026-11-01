@@ -27,7 +27,8 @@ def test_page_renders_with_default_filters(page):
     at = run_page(page)
     assert not at.exception, at.exception
     assert not at.error
-    assert "Apr 01, 2026 – Sep 30, 2026" in at.markdown[0].value
+    if page:   # the Overview leaves the filter summary to the filter bar
+        assert "Apr 01, 2026 – Sep 30, 2026" in at.markdown[0].value
 
 
 @pytest.mark.parametrize("page", PAGES)
@@ -36,8 +37,9 @@ def test_page_renders_with_narrow_filters(page):
                   teams=["Echo"], languages=["Mandarin"])
     assert not at.exception, at.exception
     assert not at.error
-    assert "Sep 01, 2026 – Sep 30, 2026" in at.markdown[0].value
-    assert "Teams: Echo" in at.caption[0].value
+    if page:
+        assert "Sep 01, 2026 – Sep 30, 2026" in at.markdown[0].value
+        assert "Teams: Echo" in at.caption[0].value
 
 
 def test_start_after_end_shows_friendly_message():
@@ -76,7 +78,10 @@ def test_filters_survive_page_switches():
 def test_overview_adoption_card():
     at = run_page(None)
     assert not at.exception
-    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Agents Repeatedly Not Using the Tool"]
+    assert at.title[0].value == "Translation Tool Adoption"
+    assert not [m for m in at.markdown if "2026" in m.value]   # no date range line
+    assert not [c for c in at.caption if c.value.startswith("Teams:")]
+    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Trends"]
     line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
     assert line.value == "**8,114** of **14,844** eligible calls adopted the tool"
     assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
@@ -85,19 +90,42 @@ def test_overview_adoption_card():
 
 def test_overview_repeat_non_users():
     at = run_page(None)
-    sub = [h for h in at.subheader if h.value == "Agents Repeatedly Not Using the Tool"][0]
+    sub = [h for h in at.subheader if h.value == "Trends"][0]
     assert sub.help.startswith("Agents whose tool was enabled but who handled eligible calls")
-    assert at.number_input(key="min_missed").value == 3
+    slider = at.slider(key="min_missed")
+    assert (slider.value, slider.min, slider.max) == (3, 1, 93)   # max = most missed by one agent
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
     assert line.value == "**143** agents with **6,728** missed calls (at least 3 each)"
     assert any(c.value == "Showing 15 of 143 agents; the CSV includes all." for c in at.caption)
-    at.number_input(key="min_missed").set_value(90).run()
+    at.slider(key="min_missed").set_value(1).run()
+    line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
+    assert line.value == "**145** agents with **6,730** missed calls (at least 1 each)"
+    at.slider(key="min_missed").set_value(90).run()
     assert not at.exception
     line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
     assert line.value == "**2** agents with **184** missed calls (at least 90 each)"
     assert not [c for c in at.caption if c.value.startswith("Showing")]
-    at.number_input(key="min_missed").set_value(500).run()
-    assert any("No agents have 500 or more missed calls" in i.value for i in at.info)
+
+
+def test_overview_slider_clamps_to_new_max():
+    """Narrowing the filters lowers the slider's max and pulls a higher value down to it."""
+    at = run_page(None)
+    at.slider(key="min_missed").set_value(90).run()
+    at.session_state["teams"] = ["Echo"]
+    at.session_state["languages"] = ["Mandarin"]
+    at.run()
+    assert not at.exception, at.exception
+    slider = at.slider(key="min_missed")
+    assert slider.max < 90 and slider.value == slider.max
+
+
+def test_overview_trends_chart_single_series():
+    import plotly.io as pio
+    at = run_page(None)
+    fig = pio.from_json(at.get("plotly_chart")[1].proto.spec)
+    assert [t.type for t in fig.data] == ["bar"]
+    assert fig.data[0].marker.color == "#F4A261" and not fig.layout.showlegend
+    assert list(fig.data[0].x[:3]) == sorted(fig.data[0].x, reverse=True)[:3]
 
 
 # --- Sessions and caches carried over from an earlier version ---------------------------
@@ -138,7 +166,8 @@ def test_session_with_preset_but_no_supervisors(page):
     assert "sites" not in at.session_state and "_w_sites" not in at.session_state
     assert at.session_state["teams"] == ["Echo"]
     assert len(at.session_state["supervisors"]) > 1
-    assert "Teams: Echo · Supervisors: all · Languages: Spanish" in at.caption[0].value
+    if page:
+        assert "Teams: Echo · Supervisors: all · Languages: Spanish" in at.caption[0].value
 
 
 def test_stale_metrics_module_is_reloaded():

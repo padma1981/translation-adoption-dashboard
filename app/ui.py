@@ -272,19 +272,21 @@ def _describe(values, everything):
     return ", ".join(values) or "none"
 
 
-def page_header(title, subtitle=None, require_data=True) -> Filters:
-    """Title, active filter summary, and stops the page if filters are invalid
-    or return no eligible calls. Returns the active Filters."""
-    st.title(title)
+def page_header(title, subtitle=None, require_data=True, centered=False,
+                show_filters=True) -> Filters:
+    """Title, active filter summary (unless show_filters is False), and stops the page
+    if filters are invalid or return no eligible calls. Returns the active Filters."""
+    st.title(title, text_alignment="center" if centered else "left")
     f = st.session_state.filters
-    opts = options()
-    days = (f.end - f.start).days + 1
-    st.markdown(
-        f"**{f.start:%b %d, %Y} – {f.end:%b %d, %Y}** ({days:,} days, {st.session_state.preset.lower()})"
-        if days > 0 else "**Invalid date range**")
-    st.caption(f"Teams: {_describe(f.teams, opts['teams'])}"
-               f" · Supervisors: {_describe(f.supervisors, opts['supervisors'])}"
-               f" · Languages: {_describe(f.languages, opts['languages'])}")
+    if show_filters:
+        opts = options()
+        days = (f.end - f.start).days + 1
+        st.markdown(
+            f"**{f.start:%b %d, %Y} – {f.end:%b %d, %Y}** ({days:,} days, {st.session_state.preset.lower()})"
+            if days > 0 else "**Invalid date range**")
+        st.caption(f"Teams: {_describe(f.teams, opts['teams'])}"
+                   f" · Supervisors: {_describe(f.supervisors, opts['supervisors'])}"
+                   f" · Languages: {_describe(f.languages, opts['languages'])}")
     if subtitle:
         st.caption(subtitle)
 
