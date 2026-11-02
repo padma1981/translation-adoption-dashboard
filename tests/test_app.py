@@ -23,7 +23,7 @@ def run_page(page, **state):
 
 
 def date_line(at):
-    return next(m.value for m in at.markdown if "2026" in m.value)
+    return next(m.value for m in at.markdown if m.value.startswith("**") and "2026" in m.value)
 
 
 def filter_line(at):
@@ -87,10 +87,10 @@ def test_overview_adoption_card():
     at = run_page(None)
     assert not at.exception
     assert at.title[0].value == "Translation Tool Adoption"
-    assert not [m for m in at.markdown if "2026" in m.value]   # no date range line
+    assert not [m for m in at.markdown if m.value.startswith("**Apr")]   # no date range line
     assert not [c for c in at.caption if c.value.startswith("Teams:")]
-    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Trends", "Adoption by Month",
-                                               "Calls vs Tool Use by Language"]
+    assert [h.value for h in at.subheader] == ["Adoption Percentage", "Adoption by Month",
+                                               "Calls vs Tool Use by Language", "Trends"]
     line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
     assert line.value == "**8,114** of **12,836** eligible calls adopted the tool"   # no support excluded
     assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
@@ -135,15 +135,16 @@ def test_overview_slider_clamps_to_new_max():
 def test_overview_trends_chart_single_series():
     import plotly.io as pio
     at = run_page(None)
-    fig = pio.from_json(at.get("plotly_chart")[1].proto.spec)
+    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
     assert [t.type for t in fig.data] == ["bar"]
+    assert fig.layout.yaxis.tickfont.color == "#1D3557" and fig.layout.yaxis.tickfont.size == 13
     assert fig.data[0].marker.color == "#F4A261" and not fig.layout.showlegend
     assert list(fig.data[0].x[:3]) == sorted(fig.data[0].x, reverse=True)[:3]
 
 
 def month_bars(at):
     import plotly.io as pio
-    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
+    fig = pio.from_json(at.get("plotly_chart")[1].proto.spec)
     return fig, dict(zip(fig.data[0].x, fig.data[0].y))
 
 
@@ -155,6 +156,12 @@ def test_overview_adoption_by_month():
         "May 2026": 38.8, "Jun 2026": 57.6, "Jul 2026": 57.8, "Aug 2026": 68.0, "Sep 2026": 72.2}
     assert bars["Apr 2026"] is None
     assert [a.text for a in fig.layout.annotations] == ["Before<br>rollout"]
+    # Gradient: lowest month light teal, highest deep indigo; Apr is a grey stub.
+    colors = dict(zip(fig.data[0].x, fig.data[0].marker.color))
+    assert colors["May 2026"] == "#7FD1C7" and colors["Sep 2026"] == "#3730A3"
+    labels = dict(zip(fig.data[0].x, fig.data[0].textfont.color))
+    assert labels["May 2026"] == "#1D3557" and labels["Sep 2026"] == "#FFFFFF"
+    assert list(fig.data[1].x) == ["Apr 2026"] and fig.data[1].marker.color == "#CBD5E1"
     month = at.selectbox(key="ov_month_pick")
     assert month.options == ["All months", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"]
 
@@ -166,8 +173,10 @@ def test_overview_month_drill_down_by_dropdown():
     assert not at.exception, at.exception
     assert at.session_state["ov_month"] == "Jun 2026"
     assert any(c.value == "**Jun 2026** by language" for c in at.caption)
-    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
+    fig = pio.from_json(at.get("plotly_chart")[1].proto.spec)
     assert list(fig.data[0].x) == ["Spanish", "Portuguese", "Mandarin", "Vietnamese"]
+    colors = list(fig.data[0].marker.color)
+    assert colors[0] != colors[1] and "#7FD1C7" in colors and "#3730A3" in colors   # gradient
     at.button(key="month_back").click().run()
     assert at.session_state["ov_month"] is None
     assert at.selectbox(key="ov_month_pick").value == "All months"
@@ -251,3 +260,35 @@ def test_stale_metrics_module_is_reloaded():
     at = run_page(None)
     assert not at.exception, at.exception
     assert hasattr(ui.metrics, "repeat_non_users") and hasattr(ui, "render_filter_bar")
+
+
+# --- Filters menu and shared chart template ------------------------------------------------
+
+def test_filters_menu_summary_and_count():
+    at = run_page(None)
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters"]
+    assert any(m.value == "Apr 1 – Sep 30, 2026 · All teams · All supervisors · All languages"
+               for m in at.markdown)
+    at.multiselect(key="_w_teams").set_value(["Echo"]).run()
+    at.selectbox(key="_w_preset").set_value("Last 30 days").run()
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters (2)"]
+    assert any(m.value == "Sep 1 – Sep 30, 2026 · Echo · All supervisors · All languages"
+               for m in at.markdown)
+    at.button(key="reset_filters").click().run()
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters"]
+
+
+def test_every_chart_uses_the_bold_template():
+    import plotly.io as pio
+    at = run_page(None)
+    for chart in at.get("plotly_chart"):
+        layout = pio.from_json(chart.proto.spec).layout
+        assert layout.template.layout.font.weight == "bold"
+        assert layout.template.layout.hoverlabel.font.weight == "bold"
+        assert layout.template.data.bar[0].textfont.weight == "bold"
+
+
+def test_gradient_colors():
+    import ui
+    assert ui.gradient_colors([0.4, 0.7, None]) == ["#7FD1C7", "#3730A3", "#CBD5E1"]
+    assert ui.label_color("#3730A3") == "#FFFFFF" and ui.label_color("#7FD1C7") == "#1D3557"

@@ -1,5 +1,5 @@
-"""Shared dashboard pieces: cached metric calls, global filter bar, page header,
-colors and number formatting. No metric logic lives here."""
+"""Shared dashboard pieces: cached metric calls, global Filters menu, page header,
+colors, the shared Plotly template and number formatting. No metric logic lives here."""
 
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
@@ -8,6 +8,7 @@ import sys
 
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +52,58 @@ LANGUAGE_COLORS = {"Spanish": "#e87ba4", "Portuguese": "#008300",
                    "Mandarin": "#6250d6", "Vietnamese": "#e34948"}
 TEAM_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 ROUTING_COLORS = {"Native agent": "#a3a29b", "Overflow to non-native": "#6250d6"}
+
+# --- Shared Plotly template ----------------------------------------------------
+# Every chart text is bold: tick labels, axis titles, data labels, legend, hover
+# labels and annotations. Built on Streamlit's default template (colorway etc.),
+# registered as the default so every new figure on every page gets it; show()
+# also sets it explicitly.
+BOLD = dict(weight="bold")
+PLOTLY_TEMPLATE = go.layout.Template(pio.templates["streamlit" if "streamlit" in pio.templates
+                                                   else "plotly"])
+PLOTLY_TEMPLATE.layout.update(
+    font=BOLD, hoverlabel=dict(font=BOLD), legend=dict(font=BOLD, title_font=BOLD),
+    xaxis=dict(tickfont=BOLD, title_font=BOLD), yaxis=dict(tickfont=BOLD, title_font=BOLD),
+    annotationdefaults=dict(font=BOLD))
+for _trace, _fonts in (("bar", ("textfont", "insidetextfont", "outsidetextfont")),
+                       ("pie", ("textfont", "insidetextfont", "outsidetextfont")),
+                       ("scatter", ("textfont",))):
+    _styles = [t.to_plotly_json() for t in PLOTLY_TEMPLATE.data[_trace]] or [{}]
+    PLOTLY_TEMPLATE.data[_trace] = [{**t, **{f: BOLD for f in _fonts}} for t in _styles]
+pio.templates["dashboard"] = PLOTLY_TEMPLATE
+pio.templates.default = "dashboard"
+
+# Adoption gradient: low = light teal, high = deep indigo. Months before rollout grey.
+GRADIENT_LOW, GRADIENT_HIGH = "#7FD1C7", "#3730A3"
+BEFORE_ROLLOUT_COLOR = "#CBD5E1"
+LABEL_DARK, LABEL_LIGHT = "#1D3557", "#FFFFFF"
+
+
+def _rgb(hex_color):
+    return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def gradient_colors(values):
+    """Teal-to-indigo color per value, scaled between the lowest and highest value
+    shown (one value gets the middle). Missing values get the before-rollout grey."""
+    known = [v for v in values if pd.notna(v)]
+    lo, hi = (min(known), max(known)) if known else (0, 0)
+    colors = []
+    for v in values:
+        if pd.isna(v):
+            colors.append(BEFORE_ROLLOUT_COLOR)
+            continue
+        t = 0.5 if hi == lo else (v - lo) / (hi - lo)
+        mix = [round(a + (b - a) * t) for a, b in zip(_rgb(GRADIENT_LOW), _rgb(GRADIENT_HIGH))]
+        colors.append("#{:02X}{:02X}{:02X}".format(*mix))
+    return colors
+
+
+def label_color(hex_color):
+    """White text on dark fills, navy on light ones (relative luminance)."""
+    r, g, b = (c / 255 for c in _rgb(hex_color))
+    return LABEL_LIGHT if 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5 else LABEL_DARK
+
 
 PRESETS = ["All time", "Last 7 days", "Last 30 days", "Last 90 days", "Month to date",
            "Since rollout", "Custom"]
@@ -218,42 +271,59 @@ def _repair_state(opts):
         ss[key] = valid if valid or value == [] else defaults[key]
 
 
-FILTER_BAR_CSS = """
+FILTER_MENU_CSS = """
 <style>
-/* No sidebar on a laptop: the menu is on top and filters live in this bar.
-   On a phone Streamlit moves the menu into a slide-out panel, so leave it. */
-.st-key-filter_bar { padding: 0.5rem 0.75rem 0.6rem; }
-/* Phone: two controls per row instead of one tall stack; date range full width. */
+/* One right-aligned row under the menu: active-filter summary, then the Filters button. */
+.st-key-filter_menu { margin-bottom: 0.25rem; }
+.st-key-filter_menu [data-testid="stMarkdownContainer"] p { margin: 0; color: #52514e;
+    font-size: 0.9rem; text-align: right; }
+.st-key-filter_menu [data-testid="stPopover"] button p { white-space: nowrap; font-weight: 600; }
+/* The open menu: two columns of controls, wide enough for the date inputs. */
+[data-testid="stPopoverBody"]:has(.st-key-filter_panel) { min-width: min(560px, 92vw); }
 @media (max-width: 640px) {
-  .st-key-filter_bar [data-testid="stHorizontalBlock"] { flex-flow: row wrap; gap: 0.5rem; }
-  .st-key-filter_bar [data-testid="stColumn"] { flex: 1 1 calc(50% - 0.5rem) !important;
-      min-width: calc(50% - 0.5rem) !important; width: calc(50% - 0.5rem) !important; }
-  .st-key-filter_bar [data-testid="stColumn"]:first-child { flex-basis: 100% !important;
-      min-width: 100% !important; width: 100% !important; }
+  .st-key-filter_menu [data-testid="stMarkdownContainer"] p { font-size: 0.8rem; }
 }
-.st-key-filter_bar [data-testid="stWidgetLabel"] { min-height: 1.1rem; }
-.st-key-filter_bar [data-testid="stPopover"] button p { white-space: nowrap; overflow: hidden;
-    text-overflow: ellipsis; }
 </style>
 """
 
 
-def _summary(label, selected, everything):
-    """Popover button text, e.g. 'Team: All', 'Team: Echo', 'Team: 2 of 6'."""
+def _date_span(start, end):
+    """'Apr 1 – Sep 30, 2026', or with both years when they differ."""
+    if start.year == end.year:
+        return f"{start:%b} {start.day} – {end:%b} {end.day}, {end.year}"
+    return f"{start:%b} {start.day}, {start.year} – {end:%b} {end.day}, {end.year}"
+
+
+def _describe_choice(selected, everything, noun):
+    """'All teams', 'Echo', '2 teams' or 'No teams'."""
     if set(selected) == set(everything):
-        value = "All"
-    elif len(selected) == 1:
-        value = selected[0]
-    else:
-        value = f"{len(selected)} of {len(everything)}" if selected else "None"
-    return f"{label}: {value}"
+        return f"All {noun}"
+    if len(selected) == 1:
+        return selected[0]
+    return f"{len(selected)} {noun}" if selected else f"No {noun}"
+
+
+def filter_summary(ss, opts):
+    """One line describing the active filters, shown next to the Filters button."""
+    return " · ".join([_date_span(ss.start_date, ss.end_date),
+                       _describe_choice(ss.teams, opts["teams"], "teams"),
+                       _describe_choice(ss.supervisors, opts["supervisors"], "supervisors"),
+                       _describe_choice(ss.languages, opts["languages"], "languages")])
+
+
+def changed_filters(ss, opts, locked=()):
+    """How many filters differ from the default (the date range counts once).
+    Filters locked to the user's scope are not counted."""
+    count = int((ss.start_date, ss.end_date) != (opts["min_date"], opts["max_date"]))
+    return count + sum(set(ss[key]) != set(opts[key]) for key in LIST_KEYS if key not in locked)
 
 
 def render_filter_bar():
-    """Draw the global filter bar and store the active Filters in session_state.
+    """Draw the global Filters menu and store the active Filters in session_state.
 
     Rendered once by the entry point above every page, so selections carry
-    across pages. One row on a laptop; Streamlit stacks the columns on a phone.
+    across pages: a right-aligned "Filters" popover with a one-line summary of
+    the active filters next to it, and a count when any filter isn't the default.
     """
     opts = options()
     ss = st.session_state
@@ -261,29 +331,36 @@ def render_filter_bar():
     scope = user_scope()
     if scope:   # a supervisor's Team and Supervisor filters are locked to their team
         ss.teams, ss.supervisors = [scope[0]], [s for s in scope[1:] if s]
+    locked = ("teams", "supervisors") if scope else ()
 
     for key in FILTER_KEYS:
         ss[f"_w_{key}"] = ss[key]
     widget = lambda key: dict(key=f"_w_{key}", on_change=_widget_changed, args=(key,))  # noqa: E731
 
-    st.html(FILTER_BAR_CSS)
-    with st.container(border=True, key="filter_bar"):
-        cols = st.columns([1.2, 1.35, 1.35, 1, 1.2, 1.15, 0.65], gap="small",
-                          vertical_alignment="bottom")
-        cols[0].selectbox("Date range", PRESETS, **widget("preset"),
-                          help=f"Presets count back from the last day of data "
-                               f"({opts['max_date']:%b %d, %Y}).")
-        kw = dict(min_value=opts["min_date"], max_value=opts["max_date"], format="YYYY-MM-DD")
-        cols[1].date_input("Start", **widget("start_date"), **kw)
-        cols[2].date_input("End", **widget("end_date"), **kw)
-        for col, key, label in ((cols[3], "teams", "Team"), (cols[4], "supervisors", "Supervisor"),
-                                (cols[5], "languages", "Language")):
-            locked = bool(scope) and key in ("teams", "supervisors")
-            with col.popover(_summary(label, ss[key], opts[key]), width="stretch", disabled=locked,
-                             help="Locked to your team" if locked else None):
-                st.multiselect(label, opts[key], **widget(key), placeholder=f"Choose {key}")
-        cols[6].button("Reset", on_click=_reset, width="stretch", help="Reset all filters",
-                       key="reset_filters")
+    st.html(FILTER_MENU_CSS)
+    n = changed_filters(ss, opts, locked)
+    with st.container(horizontal=True, horizontal_alignment="right", vertical_alignment="center",
+                      key="filter_menu"):
+        st.markdown(filter_summary(ss, opts), width="content")
+        with st.popover(f"Filters ({n})" if n else "Filters", icon=":material/filter_list:",
+                        width="content"):
+            with st.container(key="filter_panel"):
+                left, right = st.columns(2, gap="medium")
+                left.selectbox("Date range", PRESETS, **widget("preset"),
+                               help=f"Presets count back from the last day of data "
+                                    f"({opts['max_date']:%b %d, %Y}).")
+                kw = dict(min_value=opts["min_date"], max_value=opts["max_date"],
+                          format="YYYY-MM-DD")
+                left.date_input("Start", **widget("start_date"), **kw)
+                left.date_input("End", **widget("end_date"), **kw)
+                for key, label in (("teams", "Team"), ("supervisors", "Supervisor"),
+                                   ("languages", "Language")):
+                    is_locked = key in locked
+                    right.multiselect(label, opts[key], **widget(key), placeholder=f"Choose {key}",
+                                      disabled=is_locked,
+                                      help="Locked to your team" if is_locked else None)
+                st.button("Reset", on_click=_reset, width="stretch", help="Reset all filters",
+                          key="reset_filters", icon=":material/restart_alt:")
 
     errors = []
     if ss.start_date > ss.end_date:
@@ -306,14 +383,33 @@ def _describe(values, everything):
     return ", ".join(values) or "none"
 
 
+HEADER_ROW_CSS = """
+<style>
+.st-key-header_row .page-art { display: flex; justify-content: flex-end; }
+.st-key-header_row .page-art img { height: 170px; width: auto; max-width: 100%; }
+@media (max-width: 640px) {   /* small under the title; the empty spacer takes no room */
+  .st-key-header_row [data-testid="stColumn"]:first-child { display: none; }
+  .st-key-header_row .page-art { justify-content: center; }
+  .st-key-header_row .page-art img { height: 84px; }
+}
+</style>
+"""
+
+
 def page_header(title, subtitle=None, require_data=True, centered=False,
                 show_filters=True, art=None) -> Filters:
-    """Optional decorative art (HTML/SVG) above the title, title, active filter summary
-    (unless show_filters is False), and stops the page if filters are invalid or
-    return no eligible calls. Returns the active Filters."""
-    if art:
-        st.html(art)
-    st.title(title, text_alignment="center" if centered else "left")
+    """Title (with optional decorative art (HTML) on the right of a header row),
+    active filter summary (unless show_filters is False), and stops the page if
+    filters are invalid or return no eligible calls. Returns the active Filters."""
+    if art:   # header row: empty spacer, centered title, art; stacks on a phone
+        st.html(HEADER_ROW_CSS)
+        with st.container(key="header_row"):
+            _, mid, right = st.columns([1, 2, 1], vertical_alignment="center")
+            mid.title(title, anchor=False, text_alignment="center")
+            with right:
+                st.html(art)
+    else:
+        st.title(title, text_alignment="center" if centered else "left")
     f = st.session_state.filters
     if show_filters:
         opts = options()
@@ -339,7 +435,7 @@ def page_header(title, subtitle=None, require_data=True, centered=False,
 
 def no_data(what="these filters"):
     st.info(f"No data for {what}. Try a wider date range or add teams, supervisors or languages "
-            "in the filter bar.", icon="🔎")
+            "in the Filters menu.", icon="🔎")
 
 
 def footnote():
@@ -399,7 +495,8 @@ def mark_dates(fig, rows, label_col, date_col, start=None, end=None):
 
 
 def show(fig, width="stretch"):
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(template=PLOTLY_TEMPLATE, paper_bgcolor="rgba(0,0,0,0)",
+                      plot_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, width=width, config={"displayModeBar": False})
 
 

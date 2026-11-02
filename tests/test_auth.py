@@ -324,10 +324,12 @@ def test_supervisor_scope_forces_their_team_in_every_metrics_call(monkeypatch):
         assert {(teams, sups) for _, teams, sups in calls} == {(("Atlas",), ("Rachel Young",))}, page
         assert at.session_state["teams"] == ["Atlas"]
         assert at.session_state["supervisors"] == ["Rachel Young"]
-    popovers = [p.proto.popover for p in at.get("popover")]
-    locked = [p for p in popovers if p.label.startswith(("Team:", "Supervisor:"))]
-    assert [p.label for p in locked] == ["Team: Atlas", "Supervisor: Rachel Young"]
-    assert all(p.disabled for p in locked)
+    locked = [at.multiselect(key="_w_teams"), at.multiselect(key="_w_supervisors")]
+    assert [m.value for m in locked] == [["Atlas"], ["Rachel Young"]]
+    assert all(m.disabled for m in locked) and not at.multiselect(key="_w_languages").disabled
+    # The locked team doesn't count as a changed filter; the summary names it.
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters"]
+    assert any("Atlas · Rachel Young · All languages" in m.value for m in at.markdown)
 
 
 @pytest.mark.parametrize("page", [DQ, UM])

@@ -2,7 +2,7 @@
 
 Run with: streamlit run app/streamlit_app.py
 Nothing but the sign-in screens is shown until a user is signed in (see auth.py).
-The top menu (only the pages the user's role allows) and the filter bar are drawn
+The top menu (only the pages the user's role allows) and the Filters menu are drawn
 here once, so filters carry across every page.
 """
 
@@ -79,43 +79,69 @@ LANGUAGE_HELP = ("Language calls: all calls in that language, native and non-nat
                  "Eligible calls: tool-enabled eligible calls handled with the tool or the "
                  "interpreter line (no-support calls excluded). Tool %: used the tool / eligible.")
 
-# Decorative header art: a headset between "Hola" and "Hello" speech bubbles, with the
-# four language colors. st.html strips inline <svg>, so it is shown as a data-URI image.
-HEADER_SVG = """<svg viewBox="0 0 240 112" width="240" height="112" xmlns="http://www.w3.org/2000/svg">
-  <rect x="6" y="10" width="76" height="38" rx="14" fill="#0F9D8A"/>
-  <path d="M58 47 L74 62 L70 47 Z" fill="#0F9D8A"/>
-  <text x="44" y="36" text-anchor="middle" font-family="sans-serif" font-size="19"
-        font-weight="700" fill="#FFFFFF">Hola</text>
-  <rect x="158" y="10" width="76" height="38" rx="14" fill="#F4A261"/>
-  <path d="M182 47 L166 62 L170 47 Z" fill="#F4A261"/>
-  <text x="196" y="36" text-anchor="middle" font-family="sans-serif" font-size="19"
-        font-weight="700" fill="#1F2937">Hello</text>
-  <path d="M90 76 A30 30 0 0 1 150 76" fill="none" stroke="#1F2937" stroke-width="7"
+# Decorative header art (original flat illustration, drawn here): a contact center agent
+# with a headset at a laptop, four speech bubbles in the in-scope languages and the laptop
+# translating them into "Hello". Dashboard palette: teal, indigo, soft orange, navy.
+# st.html strips inline <svg>, so it is shown as a data-URI image.
+_CJK = "'Microsoft YaHei','PingFang SC','Noto Sans SC','Noto Sans CJK SC',sans-serif"
+HEADER_SVG = f"""<svg viewBox="0 0 300 200" width="300" height="200" xmlns="http://www.w3.org/2000/svg"
+     font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-weight="700">
+  <path d="M42 112 C30 56 96 20 160 26 C228 32 286 70 274 128 C262 184 184 198 122 190
+           C62 182 50 160 42 112 Z" fill="#E3F4F1"/>
+  <circle cx="268" cy="168" r="9" fill="#F4A261" opacity="0.35"/>
+  <circle cx="36" cy="170" r="6" fill="#3730A3" opacity="0.25"/>
+  <circle cx="150" cy="16" r="4" fill="#0F9D8A" opacity="0.5"/>
+  <!-- agent -->
+  <path d="M102 176 C102 146 122 128 150 128 C178 128 198 146 198 176 Z" fill="#0F9D8A"/>
+  <path d="M138 128 L150 142 L162 128 Z" fill="#E3F4F1"/>
+  <rect x="142" y="112" width="16" height="20" rx="6" fill="#E9B98F"/>
+  <circle cx="150" cy="94" r="24" fill="#F2C9A5"/>
+  <path d="M126 92 C125 72 138 64 152 64 C168 64 177 76 175 92 C168 82 156 78 142 81
+           C134 83 129 87 126 92 Z" fill="#1D3557"/>
+  <circle cx="142" cy="97" r="2.2" fill="#1D3557"/>
+  <circle cx="158" cy="97" r="2.2" fill="#1D3557"/>
+  <path d="M143 106 Q150 112 157 106" fill="none" stroke="#1D3557" stroke-width="2.2"
         stroke-linecap="round"/>
-  <rect x="82" y="68" width="16" height="28" rx="7" fill="#1F2937"/>
-  <rect x="142" y="68" width="16" height="28" rx="7" fill="#1F2937"/>
-  <path d="M150 92 Q150 106 130 106" fill="none" stroke="#1F2937" stroke-width="4"
+  <path d="M123 94 A27 27 0 0 1 177 94" fill="none" stroke="#3730A3" stroke-width="5"
         stroke-linecap="round"/>
-  <circle cx="126" cy="106" r="5" fill="#F4A261"/>
-  <circle cx="100" cy="22" r="4" fill="#e87ba4"/>
-  <circle cx="114" cy="16" r="4" fill="#008300"/>
-  <circle cx="126" cy="16" r="4" fill="#6250d6"/>
-  <circle cx="140" cy="22" r="4" fill="#e34948"/>
+  <rect x="117" y="86" width="11" height="19" rx="5.5" fill="#3730A3"/>
+  <rect x="172" y="86" width="11" height="19" rx="5.5" fill="#3730A3"/>
+  <path d="M123 104 Q125 120 141 120" fill="none" stroke="#3730A3" stroke-width="3"
+        stroke-linecap="round"/>
+  <circle cx="143" cy="120" r="3.5" fill="#F4A261"/>
+  <!-- laptop (back of the lid faces us) showing the translation -->
+  <rect x="108" y="138" width="84" height="50" rx="6" fill="#1D3557"/>
+  <rect x="94" y="186" width="112" height="7" rx="3.5" fill="#3730A3"/>
+  <rect x="62" y="193" width="176" height="3" rx="1.5" fill="#C9D6E8"/>
+  <path d="M120 156 H138 M134 152 L138 156 L134 160 M138 166 H120 M124 162 L120 166 L124 170"
+        fill="none" stroke="#F4A261" stroke-width="2.4" stroke-linecap="round"
+        stroke-linejoin="round"/>
+  <text x="164" y="167" text-anchor="middle" font-size="15" fill="#FFFFFF">Hello</text>
+  <!-- speech bubbles -->
+  <rect x="28" y="26" width="64" height="30" rx="15" fill="#0F9D8A"/>
+  <path d="M76 54 L92 68 L68 55 Z" fill="#0F9D8A"/>
+  <text x="60" y="46.5" text-anchor="middle" font-size="15" fill="#FFFFFF">Hola</text>
+  <rect x="208" y="22" width="58" height="30" rx="15" fill="#3730A3"/>
+  <path d="M220 50 L206 66 L232 51 Z" fill="#3730A3"/>
+  <text x="237" y="42.5" text-anchor="middle" font-size="15" fill="#FFFFFF">Olá</text>
+  <rect x="12" y="96" width="64" height="30" rx="15" fill="#F4A261"/>
+  <path d="M70 102 L92 104 L74 116 Z" fill="#F4A261"/>
+  <text x="44" y="116.5" text-anchor="middle" font-size="15" fill="#1D3557"
+        font-family="{_CJK}">你好</text>
+  <rect x="206" y="92" width="86" height="30" rx="15" fill="#1D3557"/>
+  <path d="M214 98 L196 102 L212 112 Z" fill="#1D3557"/>
+  <text x="249" y="112.5" text-anchor="middle" font-size="14" fill="#FFFFFF">Xin chào</text>
 </svg>"""
 HEADER_ART = ('<div class="page-art" aria-hidden="true"><img alt="" src="data:image/svg+xml;base64,'
               + base64.b64encode(HEADER_SVG.encode()).decode() + '"></div>')
 
-TOP_CARD_HEIGHT = 410      # min height of the top-row cards (donut, Trends)
-BOTTOM_CARD_HEIGHT = 440   # min height of the bottom-row cards (month, language)
-CARDS = ["card_adoption", "card_trends", "card_month", "card_language"]
+CARDS = ["card_adoption", "card_month", "card_language", "card_trends"]
+ROWS = ["row_top", "row_bottom"]
 SECTION_CSS = f"""
 <style>
-/* Decorative art above the centered title; smaller on a phone. */
-.page-art {{ display: flex; justify-content: center; margin-bottom: -0.75rem; }}
-.page-art img {{ height: 100px; width: auto; }}
-/* Extra space between the title and the first row of cards. */
-.title-gap {{ height: 12px; }}
-/* One chart-card style for all four cards; cards in a row share a min height. */
+/* Extra space between the header and the first row of cards. */
+.title-gap {{ height: 8px; }}
+/* One chart-card style for all four cards. */
 {", ".join(f".st-key-{c}" for c in CARDS)} {{
   background: #FFFFFF;
   border: 1px solid #94A3B8; border-radius: 14px;
@@ -123,12 +149,19 @@ SECTION_CSS = f"""
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.10);
   overflow: visible;
 }}
-.st-key-card_adoption, .st-key-card_trends {{ min-height: {TOP_CARD_HEIGHT}px; }}
-.st-key-card_month, .st-key-card_language {{ min-height: {BOTTOM_CARD_HEIGHT}px; }}
+/* Cards in a row share a height: columns stretch to the taller one, and each card
+   grows to fill its column (heading above it, CSV button below). */
+{", ".join(f".st-key-{r} [data-testid='stHorizontalBlock']" for r in ROWS)} {{
+  align-items: stretch;
+}}
+{", ".join(f".st-key-{r} [data-testid='stColumn'] > [data-testid='stVerticalBlock']" for r in ROWS)} {{
+  height: 100%;
+}}
+{", ".join(f"[data-testid='stLayoutWrapper']:has(> .st-key-{c}), .st-key-{c}" for c in CARDS)} {{
+  flex: 1 1 auto;
+}}
 @media (max-width: 640px) {{
-  .page-art img {{ height: 56px; }}
   .title-gap {{ height: 0; }}
-  {", ".join(f".st-key-{c}" for c in CARDS)} {{ min-height: 0; }}
 }}
 </style>
 <div class="title-gap"></div>
@@ -140,6 +173,8 @@ DRILL_HEIGHT = 236         # leaves room for the Back button in the same card
 TABLE_HEIGHT = 330         # language table when split by queue (scrolls inside)
 TOP_AGENTS = 10
 MISSED_COLOR = "#F4A261"
+AGENT_NAME_COLOR = "#1D3557"   # dark navy agent names on the Trends axis
+EMPTY_BAR_HEIGHT = 0.08        # grey stub for a month (or language) with no tool-enabled calls
 ADOPTED_COLOR = "#0F9D8A"      # teal
 NOT_ADOPTED_COLOR = "#F4A261"  # soft orange
 MUTED = "#6b6a65"
@@ -194,30 +229,40 @@ def repeat_non_users_chart(agents):
         margin=dict(l=10, r=10, t=10, b=10), font=dict(size=12),
         xaxis=dict(title_text="Missed calls (interpreter line)", gridcolor="rgba(31,41,55,0.10)",
                    zeroline=False, range=[0, agents["missed_calls"].max() * 1.15]),
-        yaxis=dict(autorange="reversed", showgrid=False, automargin=True))
+        yaxis=dict(autorange="reversed", showgrid=False, automargin=True,
+                   tickfont=dict(color=AGENT_NAME_COLOR, size=13)))
     return fig
 
 
-def adoption_bars(df, x, height, colors=ADOPTED_COLOR, empty_text="Before<br>rollout"):
-    """Vertical adoption % bars with the % on each bar and call counts in the hover.
-    Bars with no tool-enabled calls are labeled empty_text instead of 0%."""
+def adoption_bars(df, x, height, empty_text="Before<br>rollout"):
+    """Vertical adoption % bars colored on the teal-to-indigo gradient, with the % in bold
+    on each bar (white on dark bars, navy on light ones) and call counts in the hover.
+    Bars with no tool-enabled calls get a short grey stub labeled empty_text instead of 0%."""
+    colors = ui.gradient_colors(df["tool_adoption"])
     custom = df[["enabled_tool_calls", "enabled_interpreter_calls", "counted_calls"]]
     fig = go.Figure(go.Bar(
         x=df[x], y=df["tool_adoption"], customdata=custom, marker=dict(color=colors, line=dict(width=0)),
-        texttemplate="%{y:.1%}", textposition="outside", cliponaxis=False,
-        textfont=dict(size=12, color="#1F2937"),
+        texttemplate="%{y:.1%}", textposition="inside", insidetextanchor="end", textangle=0,
+        textfont=dict(size=13, color=[ui.label_color(c) for c in colors]),
         hovertemplate=("<b>%{x}</b><br>Adoption: %{y:.1%}<br>Used the tool: %{customdata[0]:,}<br>"
                        "Used the interpreter: %{customdata[1]:,}<br>"
                        "Eligible calls (excl. no support): %{customdata[2]:,}<extra></extra>")))
-    for label in df.loc[df["tool_adoption"].isna(), x]:
-        fig.add_annotation(x=label, y=0, yanchor="bottom", text=empty_text, showarrow=False,
-                           font=dict(size=11, color=MUTED))
+    empty = df.loc[df["tool_adoption"].isna(), x]
+    if len(empty):
+        label = empty_text.replace("<br>", " ")
+        fig.add_bar(x=empty, y=[EMPTY_BAR_HEIGHT] * len(empty), name=label,
+                    marker=dict(color=ui.BEFORE_ROLLOUT_COLOR, line=dict(width=0)),
+                    hovertemplate=f"<b>%{{x}}</b><br>{label}<extra></extra>")
+        for value in empty:
+            fig.add_annotation(x=value, y=EMPTY_BAR_HEIGHT, yanchor="bottom", text=empty_text,
+                               showarrow=False, font=dict(size=11, color=MUTED))
     fig.update_layout(
-        height=height, bargap=0.35, hovermode="closest", showlegend=False, dragmode=False,
+        template=ui.PLOTLY_TEMPLATE, barmode="overlay",
+        height=height, bargap=0.18, hovermode="closest", showlegend=False, dragmode=False,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=10, r=10, t=16, b=10), font=dict(size=12),
         xaxis=dict(type="category", showgrid=False, fixedrange=True),
-        yaxis=dict(range=[0, 1.12], tickformat=".0%", gridcolor="rgba(31,41,55,0.10)",
+        yaxis=dict(range=[0, 1.05], tickformat=".0%", gridcolor="rgba(31,41,55,0.10)",
                    zeroline=False, fixedrange=True))
     return fig
 
@@ -257,10 +302,10 @@ def trends_section(f):
         min_missed = min_missed_slider(int(all_missed["missed_calls"].max()))
         agents = all_missed[all_missed["missed_calls"] >= min_missed].reset_index(drop=True)
         ui.show(repeat_non_users_chart(agents.head(TOP_AGENTS)))
-    st.markdown(f"**{len(agents):,}** agents with **{int(agents['missed_calls'].sum()):,}** "
-                f"missed calls (at least {min_missed} each)")
-    if len(agents) > TOP_AGENTS:
-        st.caption(f"Showing {TOP_AGENTS} of {len(agents):,} agents; the CSV includes all.")
+        st.markdown(f"**{len(agents):,}** agents with **{int(agents['missed_calls'].sum()):,}** "
+                    f"missed calls (at least {min_missed} each)")
+        if len(agents) > TOP_AGENTS:
+            st.caption(f"Showing {TOP_AGENTS} of {len(agents):,} agents; the CSV includes all.")
     calls = ui.q(metrics.missed_call_details, f, min_missed=int(min_missed), exclude_no_support=True)
     st.download_button("Download CSV", calls.to_csv(index=False),
                        f"missed_calls_{f.start:%Y-%m-%d}_to_{f.end:%Y-%m-%d}.csv",
@@ -314,9 +359,8 @@ def month_section(f):
             end = start + pd.offsets.MonthEnd(0)
             month_f = replace(f, start=max(start.date(), f.start), end=min(end.date(), f.end))
             langs = ui.q(metrics.overview_adoption, month_f, by="language")
-            colors = [ui.LANGUAGE_COLORS.get(lang, ADOPTED_COLOR) for lang in langs["language"]]
             st.caption(f"**{ss.ov_month}** by language")
-            ui.show(adoption_bars(langs, "language", DRILL_HEIGHT, colors=colors,
+            ui.show(adoption_bars(langs, "language", DRILL_HEIGHT,
                                   empty_text="No tool-enabled<br>calls"))
             shown = langs[["language"] + list(MONTH_CSV_COLUMNS)].rename(columns=MONTH_CSV_COLUMNS)
             shown.insert(0, "month", ss.ov_month)
@@ -373,10 +417,10 @@ def language_section(f):
 
 
 def overview():
-    """2 x 2 grid: adoption donut and Trends on top, adoption by month and the language
-    table below, each with a CSV download for the active filters. No-support calls are
+    """2 x 2 grid: adoption donut and adoption by month on top, the language table and
+    Trends below, each with a CSV download for the active filters. No-support calls are
     left out of every Overview number. Viewers see only the donut and its CSV.
-    On a phone the columns stack in reading order."""
+    On a phone the columns stack in reading order (donut, month, language, Trends)."""
     f = ui.page_header("Translation Tool Adoption", centered=True, show_filters=False, art=HEADER_ART)
     split = ui.q(metrics.adoption_split, f, exclude_no_support=True)
     if int(split["calls"].sum()) == 0:
@@ -386,19 +430,21 @@ def overview():
     no_support = int(ui.q(metrics.kpi_summary, f).iloc[0]["enabled_no_support_calls"])
 
     st.html(SECTION_CSS)
-    top_left, top_right = st.columns(2, gap="large")
-    with top_left:
-        adoption_section(f, split, no_support)
-    if ui.role() == "viewer":   # no agent names, trends or breakdowns for viewers
-        ui.footnote()
-        return
-    with top_right:
-        trends_section(f)
-    bottom_left, bottom_right = st.columns(2, gap="large")
-    with bottom_left:
-        month_section(f)
-    with bottom_right:
-        language_section(f)
+    with st.container(key="row_top"):
+        top_left, top_right = st.columns(2, gap="large")
+        with top_left:
+            adoption_section(f, split, no_support)
+        if ui.role() == "viewer":   # no agent names, trends or breakdowns for viewers
+            ui.footnote()
+            return
+        with top_right:
+            month_section(f)
+    with st.container(key="row_bottom"):
+        bottom_left, bottom_right = st.columns(2, gap="large")
+        with bottom_left:
+            language_section(f)
+        with bottom_right:
+            trends_section(f)
     ui.footnote()
 
 
