@@ -291,6 +291,58 @@ def missed_call_details(start_date=None, end_date=None, teams=None, supervisors=
         order by agent_name, agent_id, call_start_ts""", [agents] + params).df()
 
 
+def adopter_ranking(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                    min_calls=20, top=10, low=False, con=None) -> pd.DataFrame:
+    """High (or with low=True, low) adopters under the Overview definition: agents with at
+    least min_calls eligible calls (tool-enabled, tool + interpreter line), ranked by
+    adoption = tool / (tool + interpreter); the first `top` rows. calls_without_tool adds
+    no-support calls to interpreter calls (they're not in the adoption %).
+    Ties: more eligible calls first, then name."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    df = overview_adoption(*f, by="agent", exclude_no_support=True, con=con)
+    df = df.rename(columns={"counted_calls": "eligible_calls", "enabled_tool_calls": "tool_calls",
+                            "enabled_interpreter_calls": "interpreter_calls",
+                            "enabled_no_support_calls": "no_support_calls"})
+    df["calls_without_tool"] = df["interpreter_calls"] + df["no_support_calls"]
+    df = df[df["eligible_calls"] >= max(int(min_calls), 1)]
+    df = df.sort_values(["tool_adoption", "eligible_calls", "agent_name", "agent_id"],
+                        ascending=[low, False, True, True])
+    cols = ["agent_id", "agent_name", "team", "supervisor", "eligible_calls", "tool_calls",
+            "interpreter_calls", "no_support_calls", "calls_without_tool", "tool_adoption"]
+    return df[cols].head(int(top)).reset_index(drop=True)
+
+
+def coaching_calls(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                   agent_ids=(), con=None) -> pd.DataFrame:
+    """One row per tool-enabled eligible call where the tool was not used (interpreter line
+    or no support) for the given agents, with the agent's proficiency in the caller's
+    language, times as m:ss, and the agent's eligible calls and adoption for the period
+    (Overview definition). Sorted by agent, then call time."""
+    where, params = _where(start_date, end_date, teams, supervisors, languages,
+                           date_col="call_date", lang_col="caller_language")
+    calls = (con or get_connection()).execute(f"""
+        select agent_id, agent_name, team, supervisor, call_id, call_date,
+               strftime(call_start_ts, '%H:%M:%S') as call_start_time, caller_language, queue,
+               coalesce(proficiency_level, 'none') as agent_proficiency,
+               case handling_path when 'interpreter_line' then 'Interpreter line'
+                                  else 'No support' end as what_happened,
+               interpreter_minutes, interpreter_cost_usd,
+               printf('%d:%02d', handle_sec // 60, handle_sec % 60) as handle_time,
+               printf('%d:%02d', hold_sec // 60, hold_sec % 60) as hold_time,
+               transferred, disposition, csat, call_start_ts
+        from v_call_enriched
+        where expected_support = 'translation_tool'
+          and handling_path in ('interpreter_line', 'no_support')
+          and list_contains(?::varchar[], agent_id) and {where}
+        order by agent_name, agent_id, call_start_ts""", [list(agent_ids)] + params).df()
+    stats = overview_adoption(start_date, end_date, teams, supervisors, languages, by="agent",
+                              exclude_no_support=True, con=con)
+    stats = stats[["agent_id", "counted_calls", "tool_adoption"]].rename(
+        columns={"counted_calls": "agent_eligible_calls", "tool_adoption": "agent_adoption"})
+    calls["call_date"] = pd.to_datetime(calls["call_date"]).dt.date
+    return calls.drop(columns=["call_start_ts"]).merge(stats, on="agent_id", how="left")
+
+
 def adoption_trend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
                    grain="week", by=None, con=None) -> pd.DataFrame:
     """Adoption, compliance and supported rate per day/week/month, optionally by a dimension."""

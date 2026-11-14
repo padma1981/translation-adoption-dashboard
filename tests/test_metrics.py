@@ -317,6 +317,41 @@ def test_overview_definition_excludes_no_support():
     assert set(calls["handling_path"]) == {"interpreter_line"}
 
 
+def test_adopter_ranking_uses_overview_definition():
+    """FLU 2 tool -> 100%; CON 1 tool + 1 interpreter (+2 no support, not counted) -> 50%;
+    MIS 1 interpreter -> 0%. OFF (not enabled) and NAT (native) are never ranked."""
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    high = m.adopter_ranking(min_calls=1, con=con)
+    assert high["agent_id"].tolist() == ["FLU", "CON", "MIS"]
+    con_row = high.set_index("agent_id").loc["CON"]
+    assert (con_row.eligible_calls, con_row.tool_calls, con_row.interpreter_calls,
+            con_row.no_support_calls, con_row.calls_without_tool) == (2, 1, 1, 2, 3)
+    assert con_row.tool_adoption == pytest.approx(0.5)
+    assert m.adopter_ranking(min_calls=1, low=True, con=con)["agent_id"].tolist() == ["MIS", "CON", "FLU"]
+    assert m.adopter_ranking(min_calls=2, low=True, con=con)["agent_id"].tolist() == ["CON", "FLU"]
+    assert m.adopter_ranking(min_calls=1, top=1, con=con)["agent_id"].tolist() == ["FLU"]
+    assert m.adopter_ranking(min_calls=1, teams=["T1"], con=con)["agent_id"].tolist() == ["FLU"]
+
+
+def test_coaching_calls_include_interpreter_and_no_support():
+    con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
+    df = m.coaching_calls(agent_ids=["CON", "MIS"], con=con)
+    assert df["call_id"].tolist() == ["N1", "N2", "N3", "R4"]   # by agent name, then time
+    rows = df.set_index("call_id")
+    assert rows["what_happened"].to_dict() == {"N1": "No support", "N2": "No support",
+                                               "N3": "Interpreter line", "R4": "Interpreter line"}
+    assert rows["agent_proficiency"].to_dict() == {"N1": "conversational", "N2": "none",
+                                                   "N3": "conversational", "R4": "none"}
+    assert rows.loc["N3", "interpreter_cost_usd"] == pytest.approx(5 * 1.75)
+    assert (rows.loc["N3", "handle_time"], rows.loc["N3", "hold_time"]) == ("10:00", "0:40")
+    assert rows.loc["N1", "call_start_time"] == "10:00:00"
+    assert (rows.loc["N1", "agent_eligible_calls"], rows.loc["N1", "agent_adoption"]) == (2, 0.5)
+    assert rows.loc["R4", "agent_adoption"] == 0
+    assert "R3" not in rows.index and "R5" not in rows.index   # tool used / tool not enabled
+    assert m.coaching_calls(agent_ids=["MIS"], con=con)["call_id"].tolist() == ["R4"]
+    assert m.coaching_calls(agent_ids=[], con=con).empty
+
+
 def test_overview_adoption_by_month_and_language():
     con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
     months = m.overview_adoption(start_date="2026-04-15", end_date="2026-07-31", grain="month", con=con)

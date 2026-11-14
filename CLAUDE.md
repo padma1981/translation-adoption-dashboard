@@ -172,6 +172,14 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
 2. **Agents & Teams**: adoption by team, supervisor, site; agent leaderboard and
    low adopters; ramp curve by days since each agent's tool_enabled_date;
    footnote that team history isn't modeled (current team is used)
+   - Current version: Overview definition throughout (tool / (tool + interpreter)).
+     Filters: the shared date range plus single-select Team and Supervisor
+     dropdowns ("All" first, linked; locked for supervisors) instead of the
+     Filters menu. Sections: Adoption by Language (bars + all-teams marker, hidden
+     for supervisors since their data is limited to their team) and High / Low
+     Adopters (top / bottom 10 with at least N eligible calls) with a coaching CSV
+     (metrics.adopter_ranking, metrics.coaching_calls). The rates-by-team and ramp
+     sections were removed; their metrics functions and tests remain.
 3. **Languages**: volume and adoption by language; overflow rate to non-native agents
 4. **Operational Impact**: handle time, hold, transfers, CSAT by handling path
 5. **Cost**: interpreter minutes and spend over time; estimated cost avoided;
@@ -184,7 +192,9 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
      tests remain so they can come back. Their old URLs show "This page isn't
      available." (app/views/unavailable.py). Menu: Overview, Agents & Teams,
      Languages, then the account / User management menu. The Overview title sits
-     on a full-width drawn banner (SVG background, ui.title_row).
+     on a full-width CSS gradient banner (teal -> blue -> violet, soft light
+     circles, white title and subtitle; ui.title_row). One palette for every page
+     lives in ui.py (TEAL, ORANGE, CORAL, NAVY, BORDER, GRID, LANGUAGE_COLORS).
 7. **Feedback**: form for dashboard users to suggest improvements (see below)
 
 ### Date filter and global filters

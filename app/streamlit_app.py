@@ -9,7 +9,6 @@ filters carry across pages. The Overview has its own date-range picker.
 
 from dataclasses import replace
 from pathlib import Path
-import base64
 import hashlib
 import importlib
 import sys
@@ -99,106 +98,24 @@ SPEND_HELP = ("Interpreter line use per month, split by whether the agent's tran
               "already enabled on the call date. 'Tool was available' is the avoidable part: it "
               "should shrink as adoption grows. Billed at ${rate:.2f} per minute.")
 
-# Overview header banner (original, drawn here): a light teal-to-indigo gradient with faint
-# overlapping speech bubbles ("Hola", "Olá", "你好", "Xin chào", "Hello"), a dotted
-# world-map texture and gentle waves, all at 15-25% opacity so the title stays readable.
-# It is the background of the title's container (ui.title_row), as a data-URI SVG.
-_CJK = "'Microsoft YaHei','PingFang SC','Noto Sans SC','Noto Sans CJK SC',sans-serif"
-
-
-def _bubble(x, y, w, text, tail, fill, cjk=False):
-    """A rounded speech bubble at (x, y), w wide, with its tail on the left or right."""
-    tx = x + 18 if tail == "left" else x + w - 18
-    tip = x + 4 if tail == "left" else x + w - 4
-    font = f' font-family="{_CJK}"' if cjk else ""
-    return (f'<g><rect x="{x}" y="{y}" width="{w}" height="46" rx="23" fill="{fill}"/>'
-            f'<path d="M{tx - 8} {y + 40} L{tip} {y + 62} L{tx + 10} {y + 42} Z" fill="{fill}"/>'
-            f'<text x="{x + w / 2}" y="{y + 31}" text-anchor="middle" font-size="22" '
-            f'fill="#1D3557"{font}>{text}</text></g>')
-
-
-BANNER_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 170"
-     preserveAspectRatio="xMidYMid slice" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
-     font-weight="700">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#D9F2EE"/><stop offset="1" stop-color="#E0E7FF"/>
-    </linearGradient>
-    <pattern id="dots" width="12" height="12" patternUnits="userSpaceOnUse">
-      <circle cx="3" cy="3" r="1.8" fill="#1D3557"/>
-    </pattern>
-  </defs>
-  <rect width="1200" height="170" fill="url(#bg)"/>
-  <!-- dotted world-map texture -->
-  <g fill="url(#dots)" opacity="0.18">
-    <path d="M120 40 C170 20 250 30 270 60 C290 90 240 110 210 130 C180 150 130 140 110 110
-             C90 85 90 55 120 40 Z"/>
-    <path d="M330 90 C360 80 390 100 385 130 C380 160 345 165 330 145 C318 128 315 100 330 90 Z"/>
-    <path d="M470 30 C540 15 640 25 690 45 C740 65 720 95 670 100 C620 105 600 130 560 125
-             C520 120 470 100 455 75 C445 55 450 38 470 30 Z"/>
-    <path d="M760 60 C820 40 900 50 930 75 C960 100 930 130 880 135 C830 140 780 120 760 100
-             C745 85 745 68 760 60 Z"/>
-    <path d="M1010 110 C1050 100 1090 110 1095 130 C1100 150 1060 160 1030 152 C1005 145 995 120
-             1010 110 Z"/>
-  </g>
-  <!-- waves -->
-  <g fill="none" stroke="#0F9D8A" stroke-width="3" opacity="0.2">
-    <path d="M0 140 C150 115 300 165 450 140 C600 115 750 165 900 140 C1050 115 1125 150 1200 135"/>
-    <path d="M0 158 C150 133 300 183 450 158 C600 133 750 183 900 158 C1050 133 1125 168 1200 153"/>
-  </g>
-  <!-- speech bubbles, kept clear of the centered title -->
-  <g opacity="0.22">
-    {_bubble(40, 22, 104, "Hola", "right", "#0F9D8A")}
-    {_bubble(118, 70, 92, "Olá", "left", "#818CF8")}
-    {_bubble(250, 30, 100, "你好", "right", "#F4A261", cjk=True)}
-    {_bubble(860, 26, 140, "Xin chào", "left", "#818CF8")}
-    {_bubble(960, 76, 112, "Hello", "right", "#0F9D8A")}
-    {_bubble(1060, 22, 96, "Hola", "left", "#F4A261")}
-  </g>
-</svg>"""
-OVERVIEW_BANNER = "data:image/svg+xml;base64," + base64.b64encode(BANNER_SVG.encode()).decode()
-
 CARDS = ["card_adoption", "card_month", "card_language", "card_aht", "card_fte", "card_fees",
          "card_spend"]
 ROWS = ["row_top", "row_bottom", "row_third"]
-SECTION_CSS = f"""
+SECTION_CSS = ui.card_css(CARDS, ROWS) + f"""
 <style>
-/* Extra space between the header and the first row of cards. */
-.title-gap {{ height: 8px; }}
-/* One chart-card style for every card. */
-{", ".join(f".st-key-{c}" for c in CARDS)} {{
-  background: #FFFFFF;
-  border: 1px solid #94A3B8; border-radius: 14px;
-  padding: 12px 14px 10px; box-sizing: border-box;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.10);
-  overflow: visible;
-}}
-/* Cards in a row share a height: columns stretch to the taller one, and each card
-   grows to fill its column (heading above it, CSV button below). */
-{", ".join(f".st-key-{r} [data-testid='stHorizontalBlock']" for r in ROWS)} {{
-  align-items: stretch;
-}}
-{", ".join(f".st-key-{r} [data-testid='stColumn'] > [data-testid='stVerticalBlock']" for r in ROWS)} {{
-  height: 100%;
-}}
-{", ".join(f"[data-testid='stLayoutWrapper']:has(> .st-key-{c}), .st-key-{c}" for c in CARDS)} {{
-  flex: 1 1 auto;
-}}
 /* Headline above the handle-time chart; large FTE and fees numbers; spend figures. */
-.aht-headline {{ text-align: center; font-size: 1.15rem; font-weight: 700; color: #1D3557;
+.aht-headline {{ text-align: center; font-size: 1.15rem; font-weight: 700; color: {ui.NAVY};
   margin: 2px 0 0; }}
-.big-number {{ text-align: center; font-size: 2.8rem; font-weight: 800; color: #0F9D8A;
+.big-number {{ text-align: center; font-size: 2.8rem; font-weight: 800; color: {ui.TEAL};
   line-height: 1.1; margin: 4px 0 2px; }}
-.big-number span {{ font-size: 1.2rem; font-weight: 700; color: #1D3557; }}
+.big-number span {{ font-size: 1.2rem; font-weight: 700; color: {ui.NAVY}; }}
 .spend-figures {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 0.4rem 2.5rem;
   margin: 2px 0 4px; color: #52514e; font-size: 0.95rem; }}
-.spend-figures b {{ color: #1D3557; font-size: 1.25rem; margin-right: 0.3rem; }}
+.spend-figures b {{ color: {ui.NAVY}; font-size: 1.25rem; margin-right: 0.3rem; }}
 @media (max-width: 640px) {{
-  .title-gap {{ height: 0; }}
   .big-number {{ font-size: 2.2rem; }}
 }}
 </style>
-<div class="title-gap"></div>
 """
 DONUT_HEIGHT = 280
 AHT_HEIGHT = 300
@@ -208,14 +125,14 @@ MONTH_HEIGHT = 300
 DRILL_HEIGHT = 236         # leaves room for the Back button in the same card
 TABLE_HEIGHT = 330         # language table when split by queue (scrolls inside)
 EMPTY_BAR_HEIGHT = 0.08        # grey stub for a month (or language) with no tool-enabled calls
-ADOPTED_COLOR = "#0F9D8A"      # teal
-NOT_ADOPTED_COLOR = "#F4A261"  # soft orange
+ADOPTED_COLOR = ui.TEAL
+NOT_ADOPTED_COLOR = ui.ORANGE
 MUTED = "#6b6a65"
-SPEND_COLORS = {"Tool not yet enabled": "#1D3557", "Tool was available": "#F4A261"}
+SPEND_COLORS = {"Tool not yet enabled": ui.NAVY, "Tool was available": ui.ORANGE}
 SPEND_MEASURES = {"Spend": ("interpreter_spend_usd", "$%{y:,.0f}", "Interpreter spend ($)"),
                   "Minutes": ("interpreter_minutes", "%{y:,} min", "Interpreter minutes")}
-SUPPORT_COLORS = {"Native speaker": "#1D3557", "Translation tool": "#0F9D8A",
-                  "Interpreter": "#F4A261"}
+SUPPORT_COLORS = {"Native speaker": ui.NAVY, "Translation tool": ui.TEAL,
+                  "Interpreter": ui.ORANGE}
 ALL_MONTHS = "All months"
 CHART_CONFIG = {"displayModeBar": False}
 
@@ -274,7 +191,7 @@ def adoption_bars(df, x, height, empty_text="Before<br>rollout"):
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=10, r=10, t=16, b=10), font=dict(size=12),
         xaxis=dict(type="category", showgrid=False, fixedrange=True),
-        yaxis=dict(range=[0, 1.05], tickformat=".0%", gridcolor="rgba(31,41,55,0.10)",
+        yaxis=dict(range=[0, 1.05], tickformat=".0%", gridcolor=ui.GRID,
                    zeroline=False, fixedrange=True))
     return fig
 
@@ -429,7 +346,7 @@ def handle_time_chart(handle):
         x=handle["group"], y=minutes, customdata=handle[["calls", "aht_mmss"]],
         marker=dict(color=[SUPPORT_COLORS[g] for g in handle["group"]], line=dict(width=0)),
         text=handle["aht_mmss"], textposition="outside", cliponaxis=False,
-        textfont=dict(size=14, color="#1D3557"),
+        textfont=dict(size=14, color=ui.NAVY),
         hovertemplate=("<b>%{x}</b><br>Calls: %{customdata[0]:,}<br>"
                        "AHT: %{customdata[1]}<extra></extra>")))
     fig.update_layout(
@@ -439,7 +356,7 @@ def handle_time_chart(handle):
         xaxis=dict(showgrid=False, fixedrange=True, tickfont=dict(size=13)),
         yaxis=dict(title_text="Average handle time (m:ss)", range=[0, top * 1.18],
                    tickvals=ticks, ticktext=[f"{t}:00" for t in ticks],
-                   gridcolor="rgba(31,41,55,0.10)", zeroline=False, fixedrange=True))
+                   gridcolor=ui.GRID, zeroline=False, fixedrange=True))
     return fig
 
 
@@ -467,7 +384,7 @@ def fte_month_chart(months):
         x=labels, y=months["fte_saved"], customdata=months[["tool_calls", "hours_saved"]],
         marker=dict(color=SUPPORT_COLORS["Translation tool"], line=dict(width=0)),
         texttemplate="%{y:.2f}", textposition="outside", cliponaxis=False,
-        textfont=dict(size=12, color="#1D3557"),
+        textfont=dict(size=12, color=ui.NAVY),
         hovertemplate=("<b>%{x}</b><br>FTE saved: %{y:.2f}<br>Hours saved: %{customdata[1]:,.0f}"
                        "<br>Tool calls: %{customdata[0]:,}<extra></extra>")))
     fig.update_layout(
@@ -476,7 +393,7 @@ def fte_month_chart(months):
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(type="category", showgrid=False, fixedrange=True),
         yaxis=dict(title_text="FTE saved", range=[0, top * 1.25], tickformat=".1f",
-                   gridcolor="rgba(31,41,55,0.10)", zeroline=False, fixedrange=True))
+                   gridcolor=ui.GRID, zeroline=False, fixedrange=True))
     return fig
 
 
@@ -508,7 +425,7 @@ def fees_month_chart(months):
         x=labels, y=months["fees_saved_usd"], customdata=months[["tool_calls"]],
         marker=dict(color=SUPPORT_COLORS["Translation tool"], line=dict(width=0)),
         texttemplate="$%{y:,.0f}", textposition="outside", cliponaxis=False,
-        textfont=dict(size=12, color="#1D3557"),
+        textfont=dict(size=12, color=ui.NAVY),
         hovertemplate=("<b>%{x}</b><br>Fees saved: $%{y:,.0f}<br>Tool calls: %{customdata[0]:,}"
                        "<extra></extra>")))
     fig.update_layout(
@@ -517,7 +434,7 @@ def fees_month_chart(months):
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(type="category", showgrid=False, fixedrange=True),
         yaxis=dict(title_text="Fees saved", range=[0, top * 1.25], tickprefix="$", tickformat="~s",
-                   gridcolor="rgba(31,41,55,0.10)", zeroline=False, fixedrange=True))
+                   gridcolor=ui.GRID, zeroline=False, fixedrange=True))
     return fig
 
 
@@ -562,7 +479,7 @@ def spend_chart(months, measure):
         legend=dict(orientation="h", x=0, y=1.02, yanchor="bottom", font=dict(size=13)),
         xaxis=dict(type="category", showgrid=False, fixedrange=True),
         yaxis=dict(title_text=title, tickprefix="$" if measure == "Spend" else "", tickformat=",",
-                   gridcolor="rgba(31,41,55,0.10)", zeroline=False, fixedrange=True))
+                   gridcolor=ui.GRID, zeroline=False, fixedrange=True))
     return fig
 
 
@@ -598,7 +515,8 @@ def overview():
     Each card has a CSV download. No-support calls are
     left out of every Overview number. Viewers see only the donut and its CSV.
     On a phone the columns stack in reading order."""
-    ui.title_row("Translation Tool Adoption", banner=OVERVIEW_BANNER)
+    ui.title_row("Translation Tool Adoption", banner=True,
+                 subtitle="Spanish, Portuguese, Mandarin and Vietnamese calls")
     f = ui.overview_filters()
     split = ui.q(metrics.adoption_split, f, exclude_no_support=True)
     if int(split["calls"].sum()) == 0:
@@ -680,6 +598,7 @@ if key in RETIRED:
 if key not in allowed:
     st.error(auth.DENIED, icon="🔒")
     st.stop()
-if key not in ("overview", "user_management"):   # the Overview has its own date picker
+# The Overview and Agents & Teams draw their own date picker (and team dropdowns).
+if key not in ("overview", "agents", "user_management"):
     ui.render_filter_bar()
 page.run()

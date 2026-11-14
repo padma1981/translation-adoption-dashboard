@@ -16,14 +16,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from src import metrics  # noqa: E402
 
-# --- Colors (same meaning on every page) -------------------------------------
-# Handling paths use the three categorical slots validated for all-pairs
-# colour-blind separation; languages use slots 5-8 of the same palette.
+# --- Colors: one palette, same meaning on every page ------------------------------
+TEAL = "#0F9D8A"     # translation tool / high adoption
+ORANGE = "#F4A261"   # interpreter line / low adoption
+CORAL = "#E76F51"    # no support
+NAVY = "#1D3557"     # native speaker / headings
+BORDER = "#CBD5E1"   # card borders, empty bars
+GRID = "#E2E8F0"     # chart grid lines
 PATH_COLORS = {
-    "translation_tool": "#1baf7a",
-    "interpreter_line": "#2a78d6",
-    "no_support": "#eb6834",
-    "native_exempt": "#a3a29b",
+    "translation_tool": TEAL,
+    "interpreter_line": ORANGE,
+    "no_support": CORAL,
+    "native_exempt": NAVY,
 }
 PATH_LABELS = {
     "translation_tool": "Translation tool",
@@ -32,11 +36,10 @@ PATH_LABELS = {
     "native_exempt": "Native speaker (exempt)",
 }
 PATH_ORDER = ["translation_tool", "interpreter_line", "no_support", "native_exempt"]
-NOT_ADOPTED_COLOR = "#d6d4cc"   # neutral remainder of the Overview adoption donut
 RATE_COLORS = {
-    "tool_adoption": PATH_COLORS["translation_tool"],
-    "interpreter_compliance": PATH_COLORS["interpreter_line"],
-    "supported_rate": "#52514e",
+    "tool_adoption": TEAL,
+    "interpreter_compliance": ORANGE,
+    "supported_rate": NAVY,
 }
 RATE_LABELS = {
     "tool_adoption": "Tool adoption",
@@ -48,10 +51,9 @@ RATE_DEFINITIONS = {
     "interpreter_compliance": "Eligible calls before the agent's tool was enabled that used the interpreter line.",
     "supported_rate": "All eligible calls handled the expected way (tool if enabled, else interpreter).",
 }
-LANGUAGE_COLORS = {"Spanish": "#e87ba4", "Portuguese": "#008300",
-                   "Mandarin": "#6250d6", "Vietnamese": "#e34948"}
-TEAM_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
-ROUTING_COLORS = {"Native agent": "#a3a29b", "Overflow to non-native": "#6250d6"}
+LANGUAGE_COLORS = {"Spanish": "#2A9D8F", "Portuguese": "#457B9D",
+                   "Mandarin": "#E9C46A", "Vietnamese": "#9B5DE5"}
+ROUTING_COLORS = {"Native agent": NAVY, "Overflow to non-native": ORANGE}
 
 # --- Shared Plotly template ----------------------------------------------------
 # Every chart text is bold: tick labels, axis titles, data labels, legend, hover
@@ -65,8 +67,8 @@ PLOTLY_TEMPLATE = go.layout.Template(pio.templates["streamlit" if "streamlit" in
                                                    else "plotly"])
 PLOTLY_TEMPLATE.layout.update(
     font=BOLD, hoverlabel=dict(font=BOLD), legend=dict(font=BOLD, title_font=BOLD),
-    xaxis=dict(tickfont=AXIS_TEXT, title_font=AXIS_TEXT),
-    yaxis=dict(tickfont=AXIS_TEXT, title_font=AXIS_TEXT),
+    xaxis=dict(tickfont=AXIS_TEXT, title_font=AXIS_TEXT, gridcolor=GRID),
+    yaxis=dict(tickfont=AXIS_TEXT, title_font=AXIS_TEXT, gridcolor=GRID),
     annotationdefaults=dict(font=BOLD))
 for _trace, _fonts in (("bar", ("textfont", "insidetextfont", "outsidetextfont")),
                        ("pie", ("textfont", "insidetextfont", "outsidetextfont")),
@@ -78,8 +80,8 @@ pio.templates.default = "dashboard"
 
 # Adoption gradient: low = light teal, high = deep indigo. Months before rollout grey.
 GRADIENT_LOW, GRADIENT_HIGH = "#7FD1C7", "#3730A3"
-BEFORE_ROLLOUT_COLOR = "#CBD5E1"
-LABEL_DARK, LABEL_LIGHT = "#1D3557", "#FFFFFF"
+BEFORE_ROLLOUT_COLOR = BORDER
+LABEL_DARK, LABEL_LIGHT = NAVY, "#FFFFFF"
 
 
 def _rgb(hex_color):
@@ -159,11 +161,6 @@ def options() -> dict:
         _options.clear()
         opts = _options(VERSION)
     return opts
-
-
-def team_colors() -> dict:
-    """Fixed color per team, so a filter never repaints the remaining teams."""
-    return dict(zip(options()["teams"], TEAM_PALETTE))
 
 
 # --- Access scope ------------------------------------------------------------
@@ -386,34 +383,75 @@ def _describe(values, everything):
     return ", ".join(values) or "none"
 
 
+# Overview title banner, pure CSS: a deep teal -> blue -> indigo-violet gradient at about
+# 88% opacity (the page shows through slightly) with three large, soft white light
+# circles for a glassy depth. Static, so there is nothing to stop for reduced motion.
 BANNER_CSS = """
 <style>
-/* Full-width title banner: background image (an SVG data URI), rounded like the chart
-   cards, with the same shadow and room below it before the first row of cards. */
 .st-key-header_banner {
-  background-image: url("%s"); background-size: cover; background-position: center;
-  border-radius: 14px; min-height: 165px; padding: 0 1rem; box-sizing: border-box;
-  justify-content: center; margin: 0.25rem 0 1.5rem;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.10);
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255,255,255,0.24) 0, rgba(255,255,255,0) 32%),
+    radial-gradient(circle at 78% 85%, rgba(255,255,255,0.18) 0, rgba(255,255,255,0) 38%),
+    radial-gradient(circle at 52% -10%, rgba(255,255,255,0.16) 0, rgba(255,255,255,0) 34%),
+    linear-gradient(115deg, rgba(15,157,138,0.88) 0%, rgba(37,99,235,0.88) 52%,
+                    rgba(109,40,217,0.88) 100%);
+  border-radius: 16px; min-height: 155px; padding: 0.75rem 1rem; box-sizing: border-box;
+  justify-content: center; gap: 0.1rem; margin: 0.25rem 0 1.75rem;
+  box-shadow: 0 12px 30px rgba(37, 99, 235, 0.25);
 }
-.st-key-header_banner h1 { color: #1D3557; font-weight: 800; text-align: center; }
+.st-key-header_banner h1 { color: #FFFFFF; font-weight: 800; text-align: center;
+  text-shadow: 0 2px 8px rgba(15, 23, 42, 0.35); padding-bottom: 0.1rem; }
+.st-key-header_banner .banner-sub { color: rgba(255,255,255,0.85); text-align: center;
+  font-size: 1.05rem; font-weight: 600; margin: 0.35rem 0 0; }
 @media (max-width: 640px) {
-  .st-key-header_banner { min-height: 110px; margin-bottom: 1rem; }
-  .st-key-header_banner h1 { font-size: 1.75rem; line-height: 1.2; }
+  .st-key-header_banner { min-height: 110px; margin-bottom: 1.25rem; }
+  .st-key-header_banner h1 { font-size: 1.7rem; line-height: 1.2; }
+  .st-key-header_banner .banner-sub { font-size: 0.85rem; }
 }
 </style>
 """
 
 
-def title_row(title, banner=None, centered=True):
-    """Page title; with banner (an image URL, e.g. an SVG data URI), the title sits
-    centered on a full-width rounded banner."""
+def title_row(title, banner=False, subtitle=None, centered=True):
+    """Page title; with banner=True it sits centered on the full-width gradient banner,
+    with an optional one-line subtitle under it."""
     if not banner:
         st.title(title, anchor=False, text_alignment="center" if centered else "left")
         return
-    st.html(BANNER_CSS % banner)
+    st.html(BANNER_CSS)
     with st.container(key="header_banner"):
         st.title(title, anchor=False, text_alignment="center")
+        if subtitle:
+            st.markdown(f"<p class='banner-sub'>{subtitle}</p>", unsafe_allow_html=True)
+
+
+# --- Chart cards (shared by pages) -----------------------------------------------------
+
+def card_css(cards, rows=()):
+    """CSS for white chart cards (st.container keys `cards`): soft border, rounded corners,
+    shadow. Cards in the same `rows` container share a height."""
+    cards_sel = ", ".join(f".st-key-{c}" for c in cards)
+    css = f"""
+<style>
+{cards_sel} {{
+  background: #FFFFFF; border: 1px solid {BORDER}; border-radius: 14px;
+  padding: 12px 14px 10px; box-sizing: border-box; overflow: visible;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.08);
+}}
+"""
+    if rows:
+        css += f"""
+{", ".join(f".st-key-{r} [data-testid='stHorizontalBlock']" for r in rows)} {{
+  align-items: stretch;
+}}
+{", ".join(f".st-key-{r} [data-testid='stColumn'] > [data-testid='stVerticalBlock']" for r in rows)} {{
+  height: 100%;
+}}
+{", ".join(f"[data-testid='stLayoutWrapper']:has(> .st-key-{c}), .st-key-{c}" for c in cards)} {{
+  flex: 1 1 auto;
+}}
+"""
+    return css + "</style>"
 
 
 # --- Overview date range -------------------------------------------------------------
@@ -424,7 +462,7 @@ def title_row(title, banner=None, centered=True):
 
 OVERVIEW_DATES_CSS = """
 <style>
-.st-key-ov_date_bar { margin: -0.25rem 0 0.25rem; }
+.st-key-ov_date_bar, .st-key-ag_filter_bar { margin: -0.25rem 0 0.25rem; gap: 1rem; }
 </style>
 """
 
@@ -436,23 +474,99 @@ def _overview_dates_changed():
         ss.ov_start, ss.ov_end = picked
 
 
-def overview_filters() -> Filters:
-    """Draw the Overview's date-range picker (left, above the cards; default: the full
-    data range) and return Filters for those dates with every team, supervisor and language."""
-    opts, ss = options(), st.session_state
+def _date_range_state(opts):
+    """Make sure ov_start / ov_end hold a valid range and the picker is seeded from them."""
+    ss = st.session_state
     lo, hi = opts["min_date"], opts["max_date"]
     start, end = ss.get("ov_start"), ss.get("ov_end")
     if not (isinstance(start, date) and isinstance(end, date) and lo <= start <= end <= hi):
         ss.ov_start, ss.ov_end = lo, hi
     if "_w_ov_dates" not in ss:
         ss._w_ov_dates = (ss.ov_start, ss.ov_end)
+
+
+DATE_RANGE_HELP = ("Pick a start and an end date. The same range is used on the Overview "
+                   "(all teams) and on Agents & Teams.")
+
+
+def date_range_picker(opts):
+    """The shared date-range picker (one st.date_input with start and end). It is the same
+    widget on every page that uses it, so the range (ov_start / ov_end) carries over."""
+    _date_range_state(opts)
+    st.date_input("Date range", key="_w_ov_dates", min_value=opts["min_date"],
+                  max_value=opts["max_date"], format="YYYY-MM-DD",
+                  on_change=_overview_dates_changed, width=260, help=DATE_RANGE_HELP)
+
+
+def overview_filters() -> Filters:
+    """Draw the Overview's date-range picker (left, above the cards; default: the full
+    data range) and return Filters for those dates with every team, supervisor and language."""
+    opts, ss = options(), st.session_state
     st.html(OVERVIEW_DATES_CSS)
     with st.container(horizontal=True, horizontal_alignment="left", key="ov_date_bar"):
-        st.date_input("Date range", key="_w_ov_dates", min_value=lo, max_value=hi,
-                      format="YYYY-MM-DD", on_change=_overview_dates_changed, width=260,
-                      help="The Overview covers all teams, supervisors and languages. "
-                           "Use the other pages to filter further.")
+        date_range_picker(opts)
     return scoped(Filters(ss.ov_start, ss.ov_end, None, None, tuple(opts["languages"])))
+
+
+# --- Team / supervisor dropdowns (Agents & Teams) ---------------------------------------
+# Single-select, "All" first. Picking a team sets its supervisor and vice versa; "All" in
+# either resets both. Values live in ag_team / ag_supervisor ("All" or a name).
+ALL = "All"
+
+
+def _team_changed():
+    ss, opts = st.session_state, options()
+    team = ss._w_ag_team
+    ss.ag_team = team
+    ss.ag_supervisor = ALL if team == ALL else opts["team_supervisors"].get(team, ALL)
+
+
+def _supervisor_changed():
+    ss, opts = st.session_state, options()
+    sup = ss._w_ag_supervisor
+    teams = {s: t for t, s in opts["team_supervisors"].items()}
+    ss.ag_supervisor = sup
+    ss.ag_team = ALL if sup == ALL else teams.get(sup, ALL)
+
+
+def team_filters() -> Filters:
+    """Draw the date-range picker, Team and Supervisor dropdowns in one row on the left and
+    return Filters for them (all languages). Supervisors are locked to their own team
+    (dropdowns shown, disabled)."""
+    opts, ss = options(), st.session_state
+    teams, sups = opts["teams"], opts["supervisors"]
+    if ss.get("ag_team") not in [ALL] + teams or ss.get("ag_supervisor") not in [ALL] + sups:
+        ss.ag_team, ss.ag_supervisor = ALL, ALL
+    scope = user_scope()
+    if scope:
+        ss.ag_team, ss.ag_supervisor = scope[0], scope[1] or ALL
+    ss._w_ag_team, ss._w_ag_supervisor = ss.ag_team, ss.ag_supervisor
+    st.html(OVERVIEW_DATES_CSS)
+    with st.container(horizontal=True, horizontal_alignment="left", key="ag_filter_bar"):
+        date_range_picker(opts)
+        st.selectbox("Team", [ALL] + teams, key="_w_ag_team", on_change=_team_changed,
+                     disabled=bool(scope), width=200,
+                     help="Locked to your team" if scope else None)
+        st.selectbox("Supervisor", [ALL] + sups, key="_w_ag_supervisor",
+                     on_change=_supervisor_changed, disabled=bool(scope), width=240,
+                     help="Locked to your team" if scope else None)
+    pick = lambda v: None if v == ALL else (v,)  # noqa: E731
+    return scoped(Filters(ss.ov_start, ss.ov_end, pick(ss.ag_team), pick(ss.ag_supervisor),
+                          tuple(opts["languages"])))
+
+
+def with_selection(df, f):
+    """Copy of df with the dates, team and supervisor as columns, so a CSV can be reproduced."""
+    return df.assign(start_date=f.start, end_date=f.end,
+                     team=f.teams[0] if f.teams else "all",
+                     supervisor=f.supervisors[0] if f.supervisors else "all")
+
+
+def selection_line(f) -> str:
+    """'Cascade · Daniel Rose · Apr 1 – Sep 30, 2026' (or 'All teams · All supervisors · …')."""
+    team = f.teams[0] if f.teams else "All teams"
+    sup = f.supervisors[0] if f.supervisors else "All supervisors"
+    return f"{team} · {sup} · {_date_span(f.start, f.end)}"
 
 
 def page_header(title, subtitle=None, require_data=True, centered=False,
@@ -523,7 +637,7 @@ def style(fig, height=380, pct_axis=False, legend=True):
         font=dict(size=13),
     )
     fig.update_xaxes(showgrid=False, title_text="")
-    fig.update_yaxes(gridcolor="rgba(128,128,128,0.18)", zeroline=False, title_text="")
+    fig.update_yaxes(gridcolor=GRID, zeroline=False, title_text="")
     if pct_axis:
         fig.update_yaxes(tickformat=".0%", rangemode="tozero")
     if fig.layout.barmode != "group":

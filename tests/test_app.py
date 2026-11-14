@@ -7,7 +7,8 @@ import pytest
 from tests.conftest import new_app, signed_in
 
 PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py", "views/4_Cost.py"]
-AGENTS = PAGES[1]
+AGENTS, LANGUAGES = PAGES[1], PAGES[2]
+FILTER_PAGES = PAGES[2:]   # pages with the Filters menu (Agents & Teams has its own dropdowns)
 
 
 def run_page(page, **state):
@@ -35,7 +36,7 @@ def test_page_renders_with_default_filters(page):
     at = run_page(page)
     assert not at.exception, at.exception
     assert not at.error
-    if page:   # the Overview leaves the filter summary to the filter bar
+    if page in FILTER_PAGES:   # the Overview leaves the filter summary to the filter bar
         assert "Apr 01, 2026 – Sep 30, 2026" in date_line(at)
 
 
@@ -45,25 +46,25 @@ def test_page_renders_with_narrow_filters(page):
                   teams=["Echo"], languages=["Mandarin"])
     assert not at.exception, at.exception
     assert not at.error
-    if page:
+    if page in FILTER_PAGES:
         assert "Sep 01, 2026 – Sep 30, 2026" in date_line(at)
         assert "Teams: Echo" in filter_line(at)
 
 
 def test_start_after_end_shows_friendly_message():
-    at = run_page(AGENTS, preset="Custom", start_date=date(2026, 9, 30), end_date=date(2026, 9, 1))
+    at = run_page(LANGUAGES, preset="Custom", start_date=date(2026, 9, 30), end_date=date(2026, 9, 1))
     assert not at.exception
     assert any("Start date is after end date" in w.value for w in at.warning)
 
 
 def test_empty_selection_shows_friendly_message():
-    at = run_page(AGENTS, teams=[])
+    at = run_page(LANGUAGES, teams=[])
     assert not at.exception
     assert any("Select at least one team" in w.value for w in at.warning)
 
 
 def test_preset_sets_dates():
-    at = run_page(AGENTS)
+    at = run_page(LANGUAGES)
     at.selectbox(key="_w_preset").set_value("Last 7 days").run()
     assert at.session_state["start_date"] == date(2026, 9, 24)
     assert at.session_state["end_date"] == date(2026, 9, 30)
@@ -79,7 +80,8 @@ def test_filters_survive_page_switches():
         assert not at.exception, at.exception
         assert at.session_state["teams"] == ["Echo"]
         assert at.session_state["supervisors"] == ["Cynthia Reyes"]
-        assert "Teams: Echo · Supervisors: Cynthia Reyes · Languages: Mandarin" in filter_line(at)
+        if page in FILTER_PAGES:
+            assert "Teams: Echo · Supervisors: Cynthia Reyes · Languages: Mandarin" in filter_line(at)
 
 
 def test_overview_adoption_card():
@@ -184,7 +186,7 @@ def test_stale_cached_options_without_supervisors(monkeypatch):
         assert not at.exception, at.exception
         assert not at.error
     assert "supervisors" in ui._options(ui.VERSION)
-    at = run_page(AGENTS)
+    at = run_page(LANGUAGES)
     at.button(key="reset_filters").click().run()
     assert not at.exception, at.exception
 
@@ -198,11 +200,11 @@ def test_session_with_preset_but_no_supervisors(page):
     for key, value in old.items():
         at.session_state[key] = value
     at.run()
-    if page:
+    if page in FILTER_PAGES:
         at.switch_page(page).run()
     assert not at.exception, at.exception
     assert not at.error
-    if page:   # the Overview has no Filters menu, so it leaves the filter keys alone
+    if page in FILTER_PAGES:   # the Overview has no Filters menu, so it leaves the filter keys alone
         assert "sites" not in at.session_state and "_w_sites" not in at.session_state
         assert at.session_state["teams"] == ["Echo"]
         assert len(at.session_state["supervisors"]) > 1
@@ -228,7 +230,7 @@ def filters_label(at):
 
 
 def test_filters_menu_summary_and_count():
-    at = run_page(AGENTS)
+    at = run_page(LANGUAGES)
     assert filters_label(at) == ["Filters"]
     assert any(m.value == "Apr 1 – Sep 30, 2026 · All teams · All supervisors · All languages"
                for m in at.markdown)
@@ -389,3 +391,84 @@ def test_axis_text_is_bold_black_on_every_page():
                 axis = layout[name]
                 assert axis.tickfont.color == "#000000" and axis.tickfont.weight == "bold", (page, name)
                 assert axis.title.font.color == "#000000", (page, name)
+
+
+# --- Agents & Teams: date range, Team and Supervisor dropdowns, adopters --------------------
+
+def headline(at):
+    return next(m.value for m in at.markdown if "ag-headline" in m.value)
+
+
+def selection(at):
+    return next(m.value for m in at.markdown if "ag-selection" in m.value)
+
+
+def test_agents_page_sections_and_default_selection():
+    at = run_page(AGENTS)
+    assert not at.exception, at.exception
+    assert [h.value for h in at.subheader] == ["Adoption by Language", "Agents: High and Low Adopters"]
+    assert "All teams · All supervisors · Apr 1 – Sep 30, 2026" in selection(at)
+    assert not [p for p in at.get("popover") if p.proto.popover.label.startswith("Filters")]
+    assert at.selectbox(key="_w_ag_team").options[0] == "All"
+    assert at.selectbox(key="_w_ag_supervisor").options[0] == "All"
+    assert "All teams: 63.2% adoption on 12,836 eligible calls" in headline(at)   # = Overview
+
+
+@pytest.mark.parametrize("team,pct", [("Atlas", "74.2%"), ("Beacon", "75.0%"), ("Cascade", "33.8%"),
+                                      ("Delta", "74.7%"), ("Echo", "39.5%"), ("Summit", "66.3%")])
+def test_agents_team_adoption_full_range(team, pct):
+    at = run_page(AGENTS)
+    at.selectbox(key="_w_ag_team").set_value(team).run()
+    assert not at.exception, at.exception
+    assert f"{team}: {pct} adoption on" in headline(at)
+
+
+def test_agents_team_and_supervisor_follow_each_other():
+    at = run_page(AGENTS)
+    at.selectbox(key="_w_ag_team").set_value("Cascade").run()
+    assert at.selectbox(key="_w_ag_supervisor").value == "Daniel Rose"
+    assert "Cascade · Daniel Rose · Apr 1 – Sep 30, 2026" in selection(at)
+    at.selectbox(key="_w_ag_supervisor").set_value("Rachel Young").run()
+    assert at.selectbox(key="_w_ag_team").value == "Atlas"
+    at.selectbox(key="_w_ag_supervisor").set_value("All").run()
+    assert (at.selectbox(key="_w_ag_team").value, at.selectbox(key="_w_ag_supervisor").value) == ("All", "All")
+
+
+def test_agents_language_chart_has_all_teams_marker():
+    import plotly.io as pio
+    at = run_page(AGENTS)
+    at.selectbox(key="_w_ag_team").set_value("Cascade").run()
+    fig = pio.from_json(at.get("plotly_chart")[0].proto.spec)
+    bars, marker = fig.data
+    assert list(bars.y) == ["Spanish", "Portuguese", "Mandarin", "Vietnamese"]
+    assert list(bars.marker.color) == ["#2A9D8F", "#457B9D", "#E9C46A", "#9B5DE5"]
+    assert marker.marker.symbol == "line-ns" and marker.name == "All teams"
+    assert [round(x, 3) for x in marker.x] == [0.661, 0.687, 0.538, 0.529]   # all-teams, per language
+
+
+def test_agents_high_and_low_adopters():
+    at = run_page(AGENTS)
+    assert any(c.value == "Agents with fewer than 20 eligible calls aren't ranked." for c in at.caption)
+    high, low = (t.value for t in at.dataframe)
+    assert len(high) == 10 and len(low) == 10
+    assert list(high.columns) == ["Agent", "Team", "Eligible calls", "Tool calls",
+                                  "Calls without the tool", "Adoption"]
+    assert high["Adoption"].is_monotonic_decreasing and low["Adoption"].is_monotonic_increasing
+    assert (high["Eligible calls"] >= 20).all() and (low["Eligible calls"] >= 20).all()
+    at.slider(key="ag_min_calls").set_value(50).run()
+    assert not at.exception, at.exception
+    assert (at.dataframe[1].value["Eligible calls"] >= 50).all()
+    labels = [d.proto.label for d in at.get("download_button")]
+    assert "Download calls for coaching (CSV)" in labels
+    assert any(lbl.startswith("Download ") and lbl.endswith("'s calls (CSV)") for lbl in labels)
+    assert at.selectbox(key="ag_coach_agent").options[0] == at.dataframe[1].value["Agent"].iloc[0]
+
+
+def test_palette_is_shared():
+    import ui
+    assert (ui.PATH_COLORS["translation_tool"], ui.PATH_COLORS["interpreter_line"],
+            ui.PATH_COLORS["no_support"], ui.PATH_COLORS["native_exempt"]) == (
+        "#0F9D8A", "#F4A261", "#E76F51", "#1D3557")
+    assert ui.LANGUAGE_COLORS == {"Spanish": "#2A9D8F", "Portuguese": "#457B9D",
+                                  "Mandarin": "#E9C46A", "Vietnamese": "#9B5DE5"}
+    assert (ui.BORDER, ui.GRID) == ("#CBD5E1", "#E2E8F0")

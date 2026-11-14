@@ -322,7 +322,7 @@ def test_supervisor_scope_forces_their_team_in_every_metrics_call(monkeypatch):
         assert not at.exception, (page, at.exception)
         assert calls, page
         assert {(teams, sups) for _, teams, sups in calls} == {(("Atlas",), ("Rachel Young",))}, page
-        if page:   # the Overview has no Filters menu; its data is still scoped (above)
+        if page and "Agents" not in page:   # pages with the Filters menu; all are scoped (above)
             assert at.session_state["teams"] == ["Atlas"]
             assert at.session_state["supervisors"] == ["Rachel Young"]
     locked = [at.multiselect(key="_w_teams"), at.multiselect(key="_w_supervisors")]
@@ -391,3 +391,16 @@ def test_removed_pages_show_not_available(role, team):
     assert not at.exception, at.exception
     assert [i.value for i in at.info] == ["This page isn't available."]
     assert not errors(at) and not at.get("plotly_chart")
+
+
+def test_supervisor_agents_page_dropdowns_locked():
+    make_user()   # supervisor of Atlas
+    at = signed_in(new_app(), session_of("sam")).run()
+    at.switch_page("views/1_Agents_and_Teams.py").run()
+    assert not at.exception, at.exception
+    team, sup = at.selectbox(key="_w_ag_team"), at.selectbox(key="_w_ag_supervisor")
+    assert (team.value, sup.value) == ("Atlas", "Rachel Young") and team.disabled and sup.disabled
+    assert any("Atlas: 74.2% adoption on 2,910 eligible calls" in m.value for m in at.markdown)
+    import plotly.io as pio
+    fig = pio.from_json(at.get("plotly_chart")[0].proto.spec)
+    assert len(fig.data) == 1   # no all-teams marker: a supervisor only sees their team
