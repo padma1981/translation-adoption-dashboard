@@ -4,9 +4,11 @@ A Streamlit dashboard measuring how contact center agents adopt a live translati
 tool for Spanish, Portuguese, Mandarin and Vietnamese callers. **All data is
 synthetic**; there is no real customer or employee data in this repo.
 
-Pages: Overview (adoption donut, agents repeatedly not using the tool), Agents &
+Pages: Overview (executive view: adoption donut, adoption by month, calls vs tool
+use by language, handle time by support type, agent time saved in FTE), Agents &
 Teams, Languages, Operational Impact, Cost, Data Quality and (admins only) User
-management. Sign-in is required; what you see depends on your role.
+management, opened from the User management menu at the right of the top menu bar.
+Sign-in is required; what you see depends on your role.
 
 | Role | Sees |
 |---|---|
@@ -99,8 +101,8 @@ stored only as bcrypt hashes and are never shown or logged.
    can't be requested), their team (required for supervisors) and a reason.
    The request is saved with status `pending`.
 2. Until approved they see "Your account is not active yet" when signing in.
-3. An admin opens **User management** (the menu shows the number of pending
-   requests), picks the final role and team, and approves or rejects.
+3. An admin opens **User management** from the person menu at the right of the
+   top menu bar ("Approve requests (N)" shows the number pending), picks the final role and team, and approves or rejects.
 4. Admins can later change a user's role or team, deactivate or reactivate
    them, or reset their password. A reset shows a temporary password once; the
    user must change it right after signing in. Admins can't deactivate or

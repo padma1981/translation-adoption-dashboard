@@ -154,8 +154,15 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
    - Overview definition: every Overview chart and table leaves out eligible calls
      with handling_path = 'no_support' (a caption under the donut says how many).
      Overview adoption = tool / (tool + interpreter) among tool-enabled eligible
-     calls; Trends "missed calls" = interpreter-line calls only. Implemented with
-     exclude_no_support in src/metrics.py; other pages keep rules 8-10 as written.
+     calls. Implemented with exclude_no_support in src/metrics.py; other pages
+     keep rules 8-10 as written.
+   - Executive layout: no Filters menu, one date-range picker (all teams,
+     supervisors and languages; supervisors stay locked to their team). Cards:
+     Adoption Percentage | Adoption by Month; Calls vs Tool Use by Language |
+     Handle Time by Support Type (native / tool / interpreter AHT); Agent Time
+     Saved (FTE) = per language tool calls x (interpreter AHT - tool AHT), summed,
+     / (config.FTE_HOURS_PER_WEEK x weeks in range). Trends (repeat non-users) was
+     removed from the Overview; its metrics functions remain for another page.
 2. **Agents & Teams**: adoption by team, supervisor, site; agent leaderboard and
    low adopters; ramp curve by days since each agent's tool_enabled_date;
    footnote that team history isn't modeled (current team is used)
@@ -206,7 +213,9 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
 
 ### Sign-in, roles and users
 - Login page before anything else; app/auth.py draws the sign-in, request
-  access and change-password screens and the top-right user bar.
+  access and change-password screens and the account menu at the right end of
+  the top menu bar (admins: "User management" menu with Approve requests and
+  Manage users; User management is not a menu tab).
 - Users live in the "users" worksheet of the Google Sheet, accessed only
   through src/users.py; local fallback is SQLite at data/users/users.db
   (git-ignored, or $USERS_DB_PATH). Passwords are bcrypt hashes only.

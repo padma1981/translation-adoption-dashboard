@@ -182,6 +182,8 @@ AGENT_RATING_RESPONSE_RATE = 0.40
 # if none does, a call within this many seconds of the session start is used
 # (closest call start wins; multiple candidates are flagged as ambiguous).
 LINK_TOLERANCE_SEC = 0
+# Agent time saved is shown as FTE: hours saved / (this many hours x weeks in range).
+FTE_HOURS_PER_WEEK = 40
 
 # --- Output ----------------------------------------------------------------
 RAW_DATA_DIR = "data/raw"

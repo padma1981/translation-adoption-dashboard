@@ -2,8 +2,9 @@
 
 Run with: streamlit run app/streamlit_app.py
 Nothing but the sign-in screens is shown until a user is signed in (see auth.py).
-The top menu (only the pages the user's role allows) and the Filters menu are drawn
-here once, so filters carry across every page.
+The top menu (only the pages the user's role allows), the account menu at its right
+end and, on every page but the Overview, the Filters menu are drawn here once, so
+filters carry across pages. The Overview has its own date-range picker.
 """
 
 from dataclasses import replace
@@ -67,10 +68,6 @@ ELIGIBILITY_HELP = (
     "Adopted the tool: a translation session is linked to the call. "
     "Used the interpreter: the interpreter line instead of the tool.")
 
-REPEAT_HELP = ("Agents whose tool was enabled but who handled eligible calls with the interpreter line "
-               "instead of the translation tool, in the selected period and filters. "
-               "Calls with no language support are excluded.")
-
 MONTH_HELP = ("Tool adoption per month: tool calls / (tool + interpreter calls) among tool-enabled "
               "eligible calls; no-support calls are excluded. Click a bar, or pick a month below, "
               "to see that month by language.")
@@ -79,69 +76,84 @@ LANGUAGE_HELP = ("Language calls: all calls in that language, native and non-nat
                  "Eligible calls: tool-enabled eligible calls handled with the tool or the "
                  "interpreter line (no-support calls excluded). Tool %: used the tool / eligible.")
 
-# Decorative header art (original flat illustration, drawn here): a contact center agent
-# with a headset at a laptop, four speech bubbles in the in-scope languages and the laptop
-# translating them into "Hello". Dashboard palette: teal, indigo, soft orange, navy.
+AHT_HELP = ("Average handle time (talk + hold + wrap-up) in the selected dates. "
+            "Native speaker: Spanish, Portuguese, Mandarin or Vietnamese calls handled by an agent "
+            "native in that language. Translation tool / Interpreter: eligible calls handled with "
+            "the translation tool or the interpreter line. No-support calls are excluded.")
+
+FTE_HELP = ("Hours saved: for each language, tool calls x (interpreter AHT - tool AHT) in that "
+            "language over the selected dates, summed, so the language mix doesn't distort it. "
+            "FTE saved = hours saved / ({h} hours x weeks in the selected dates), where one FTE is "
+            "one agent working a {h}-hour week and weeks = days / 7. Monthly bars apply the same "
+            "per-language AHT difference to each month's tool calls, counting only that month's "
+            "days inside the selected dates.")
+
+# Decorative header art (original flat illustration, drawn here): a globe with a
+# "Hola" bubble translated into "Hello" (arrow between them) and smaller bubbles in the
+# other in-scope languages. Dashboard palette: navy, teal, indigo, soft orange.
 # st.html strips inline <svg>, so it is shown as a data-URI image.
 _CJK = "'Microsoft YaHei','PingFang SC','Noto Sans SC','Noto Sans CJK SC',sans-serif"
 HEADER_SVG = f"""<svg viewBox="0 0 300 200" width="300" height="200" xmlns="http://www.w3.org/2000/svg"
      font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-weight="700">
-  <path d="M42 112 C30 56 96 20 160 26 C228 32 286 70 274 128 C262 184 184 198 122 190
-           C62 182 50 160 42 112 Z" fill="#E3F4F1"/>
-  <circle cx="268" cy="168" r="9" fill="#F4A261" opacity="0.35"/>
-  <circle cx="36" cy="170" r="6" fill="#3730A3" opacity="0.25"/>
-  <circle cx="150" cy="16" r="4" fill="#0F9D8A" opacity="0.5"/>
-  <!-- agent -->
-  <path d="M102 176 C102 146 122 128 150 128 C178 128 198 146 198 176 Z" fill="#0F9D8A"/>
-  <path d="M138 128 L150 142 L162 128 Z" fill="#E3F4F1"/>
-  <rect x="142" y="112" width="16" height="20" rx="6" fill="#E9B98F"/>
-  <circle cx="150" cy="94" r="24" fill="#F2C9A5"/>
-  <path d="M126 92 C125 72 138 64 152 64 C168 64 177 76 175 92 C168 82 156 78 142 81
-           C134 83 129 87 126 92 Z" fill="#1D3557"/>
-  <circle cx="142" cy="97" r="2.2" fill="#1D3557"/>
-  <circle cx="158" cy="97" r="2.2" fill="#1D3557"/>
-  <path d="M143 106 Q150 112 157 106" fill="none" stroke="#1D3557" stroke-width="2.2"
-        stroke-linecap="round"/>
-  <path d="M123 94 A27 27 0 0 1 177 94" fill="none" stroke="#3730A3" stroke-width="5"
-        stroke-linecap="round"/>
-  <rect x="117" y="86" width="11" height="19" rx="5.5" fill="#3730A3"/>
-  <rect x="172" y="86" width="11" height="19" rx="5.5" fill="#3730A3"/>
-  <path d="M123 104 Q125 120 141 120" fill="none" stroke="#3730A3" stroke-width="3"
-        stroke-linecap="round"/>
-  <circle cx="143" cy="120" r="3.5" fill="#F4A261"/>
-  <!-- laptop (back of the lid faces us) showing the translation -->
-  <rect x="108" y="138" width="84" height="50" rx="6" fill="#1D3557"/>
-  <rect x="94" y="186" width="112" height="7" rx="3.5" fill="#3730A3"/>
-  <rect x="62" y="193" width="176" height="3" rx="1.5" fill="#C9D6E8"/>
-  <path d="M120 156 H138 M134 152 L138 156 L134 160 M138 166 H120 M124 162 L120 166 L124 170"
-        fill="none" stroke="#F4A261" stroke-width="2.4" stroke-linecap="round"
-        stroke-linejoin="round"/>
-  <text x="164" y="167" text-anchor="middle" font-size="15" fill="#FFFFFF">Hello</text>
-  <!-- speech bubbles -->
-  <rect x="28" y="26" width="64" height="30" rx="15" fill="#0F9D8A"/>
-  <path d="M76 54 L92 68 L68 55 Z" fill="#0F9D8A"/>
-  <text x="60" y="46.5" text-anchor="middle" font-size="15" fill="#FFFFFF">Hola</text>
-  <rect x="208" y="22" width="58" height="30" rx="15" fill="#3730A3"/>
-  <path d="M220 50 L206 66 L232 51 Z" fill="#3730A3"/>
-  <text x="237" y="42.5" text-anchor="middle" font-size="15" fill="#FFFFFF">Olá</text>
-  <rect x="12" y="96" width="64" height="30" rx="15" fill="#F4A261"/>
-  <path d="M70 102 L92 104 L74 116 Z" fill="#F4A261"/>
-  <text x="44" y="116.5" text-anchor="middle" font-size="15" fill="#1D3557"
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5"
+            orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#1D3557"/>
+    </marker>
+    <clipPath id="globe"><circle cx="150" cy="122" r="54"/></clipPath>
+  </defs>
+  <ellipse cx="150" cy="124" rx="132" ry="74" fill="#E3F4F1"/>
+  <!-- globe -->
+  <circle cx="150" cy="122" r="54" fill="#0F9D8A"/>
+  <g clip-path="url(#globe)">
+    <path d="M104 92 C118 80 140 84 142 98 C144 110 128 112 126 124 C124 136 108 140 100 128 Z"
+          fill="#7FD1C7"/>
+    <path d="M160 74 C176 72 196 84 194 100 C192 112 178 108 170 118 C162 128 168 142 160 150
+             C150 140 152 126 146 116 C140 104 148 82 160 74 Z" fill="#7FD1C7"/>
+    <path d="M168 156 C180 150 196 152 198 162 C190 176 172 180 160 176 Z" fill="#7FD1C7"/>
+  </g>
+  <g fill="none" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.6">
+    <ellipse cx="150" cy="122" rx="24" ry="54"/>
+    <ellipse cx="150" cy="122" rx="44" ry="54"/>
+    <path d="M96 122 H204 M103 95 H197 M103 149 H197"/>
+  </g>
+  <circle cx="150" cy="122" r="54" fill="none" stroke="#1D3557" stroke-width="3"/>
+  <!-- translate arrow from "Hola" to "Hello" -->
+  <path d="M100 30 Q150 0 198 30" fill="none" stroke="#1D3557" stroke-width="3.2"
+        stroke-linecap="round" marker-end="url(#tip)"/>
+  <!-- main bubbles -->
+  <rect x="12" y="28" width="86" height="40" rx="20" fill="#F4A261"/>
+  <path d="M66 66 L92 86 L80 64 Z" fill="#F4A261"/>
+  <text x="55" y="54.5" text-anchor="middle" font-size="19" fill="#1D3557">Hola</text>
+  <rect x="202" y="28" width="88" height="40" rx="20" fill="#3730A3"/>
+  <path d="M234 66 L208 86 L220 64 Z" fill="#3730A3"/>
+  <text x="246" y="54.5" text-anchor="middle" font-size="19" fill="#FFFFFF">Hello</text>
+  <!-- small bubbles -->
+  <rect x="20" y="116" width="58" height="28" rx="14" fill="#1D3557"/>
+  <path d="M70 124 L94 128 L72 136 Z" fill="#1D3557"/>
+  <text x="49" y="135" text-anchor="middle" font-size="14" fill="#FFFFFF">Olá</text>
+  <rect x="226" y="100" width="58" height="28" rx="14" fill="#7FD1C7"/>
+  <path d="M232 108 L206 112 L230 120 Z" fill="#7FD1C7"/>
+  <text x="255" y="119" text-anchor="middle" font-size="14" fill="#1D3557"
         font-family="{_CJK}">你好</text>
-  <rect x="206" y="92" width="86" height="30" rx="15" fill="#1D3557"/>
-  <path d="M214 98 L196 102 L212 112 Z" fill="#1D3557"/>
-  <text x="249" y="112.5" text-anchor="middle" font-size="14" fill="#FFFFFF">Xin chào</text>
+  <rect x="196" y="160" width="92" height="28" rx="14" fill="#FFFFFF" stroke="#0F9D8A"
+        stroke-width="2"/>
+  <path d="M206 162 L194 152 L216 161 Z" fill="#0F9D8A"/>
+  <text x="242" y="179" text-anchor="middle" font-size="14" fill="#0F9D8A">Xin chào</text>
+  <circle cx="34" cy="176" r="7" fill="#F4A261" opacity="0.45"/>
+  <circle cx="58" cy="92" r="4" fill="#3730A3" opacity="0.35"/>
+  <circle cx="276" cy="86" r="4" fill="#0F9D8A" opacity="0.5"/>
 </svg>"""
 HEADER_ART = ('<div class="page-art" aria-hidden="true"><img alt="" src="data:image/svg+xml;base64,'
               + base64.b64encode(HEADER_SVG.encode()).decode() + '"></div>')
 
-CARDS = ["card_adoption", "card_month", "card_language", "card_trends"]
-ROWS = ["row_top", "row_bottom"]
+CARDS = ["card_adoption", "card_month", "card_language", "card_aht", "card_fte"]
+ROWS = ["row_top", "row_bottom", "row_third"]
 SECTION_CSS = f"""
 <style>
 /* Extra space between the header and the first row of cards. */
 .title-gap {{ height: 8px; }}
-/* One chart-card style for all four cards. */
+/* One chart-card style for every card. */
 {", ".join(f".st-key-{c}" for c in CARDS)} {{
   background: #FFFFFF;
   border: 1px solid #94A3B8; border-radius: 14px;
@@ -160,25 +172,31 @@ SECTION_CSS = f"""
 {", ".join(f"[data-testid='stLayoutWrapper']:has(> .st-key-{c}), .st-key-{c}" for c in CARDS)} {{
   flex: 1 1 auto;
 }}
+/* Headline above the handle-time chart and the large FTE number. */
+.aht-headline {{ text-align: center; font-size: 1.15rem; font-weight: 700; color: #1D3557;
+  margin: 2px 0 0; }}
+.fte-big {{ text-align: center; font-size: 2.8rem; font-weight: 800; color: #0F9D8A;
+  line-height: 1.1; margin: 4px 0 2px; }}
+.fte-big span {{ font-size: 1.2rem; font-weight: 700; color: #1D3557; }}
 @media (max-width: 640px) {{
   .title-gap {{ height: 0; }}
+  .fte-big {{ font-size: 2.2rem; }}
 }}
 </style>
 <div class="title-gap"></div>
 """
 DONUT_HEIGHT = 280
-TRENDS_HEIGHT = 300
+AHT_HEIGHT = 300
+FTE_MONTH_HEIGHT = 200
 MONTH_HEIGHT = 300
 DRILL_HEIGHT = 236         # leaves room for the Back button in the same card
 TABLE_HEIGHT = 330         # language table when split by queue (scrolls inside)
-TOP_AGENTS = 10
-MISSED_COLOR = "#F4A261"
-AGENT_NAME_COLOR = "#1D3557"   # dark navy agent names on the Trends axis
 EMPTY_BAR_HEIGHT = 0.08        # grey stub for a month (or language) with no tool-enabled calls
 ADOPTED_COLOR = "#0F9D8A"      # teal
 NOT_ADOPTED_COLOR = "#F4A261"  # soft orange
 MUTED = "#6b6a65"
-DEFAULT_MIN_MISSED = 3
+SUPPORT_COLORS = {"Native speaker": "#1D3557", "Translation tool": "#0F9D8A",
+                  "Interpreter": "#F4A261"}
 ALL_MONTHS = "All months"
 CHART_CONFIG = {"displayModeBar": False}
 
@@ -206,31 +224,6 @@ def adoption_donut(split, share):
     fig.update_layout(height=DONUT_HEIGHT, margin=dict(l=0, r=0, t=0, b=0), showlegend=True,
                       legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.02, yanchor="top",
                                   font=dict(size=13)))
-    return fig
-
-
-def repeat_non_users_chart(agents):
-    """Horizontal bars of total missed calls per agent, most missed at the top,
-    with the count at the end of each bar."""
-    labels = agents["agent_name"] + " (" + agents["team"] + ")"
-    custom = agents[["agent_name", "team", "supervisor", "missed_calls", "enabled_eligible_calls",
-                     "tool_adoption"]]
-    fig = go.Figure(go.Bar(
-        y=labels, x=agents["missed_calls"], orientation="h", customdata=custom,
-        marker=dict(color=MISSED_COLOR, line=dict(width=0)),
-        text=agents["missed_calls"], texttemplate="%{text:,}", textposition="outside",
-        textfont=dict(size=11, color="#52514e"), cliponaxis=False,
-        hovertemplate=("<b>%{customdata[0]}</b><br>Team: %{customdata[1]}<br>"
-                       "Supervisor: %{customdata[2]}<br>Missed calls: %{customdata[3]:,}<br>"
-                       "Eligible calls (excl. no support): %{customdata[4]:,}<br>"
-                       "Adoption: %{customdata[5]:.1%}<extra></extra>")))
-    fig.update_layout(
-        height=TRENDS_HEIGHT, bargap=0.3, hovermode="closest", showlegend=False,
-        margin=dict(l=10, r=10, t=10, b=10), font=dict(size=12),
-        xaxis=dict(title_text="Missed calls (interpreter line)", gridcolor="rgba(31,41,55,0.10)",
-                   zeroline=False, range=[0, agents["missed_calls"].max() * 1.15]),
-        yaxis=dict(autorange="reversed", showgrid=False, automargin=True,
-                   tickfont=dict(color=AGENT_NAME_COLOR, size=13)))
     return fig
 
 
@@ -267,16 +260,6 @@ def adoption_bars(df, x, height, empty_text="Before<br>rollout"):
     return fig
 
 
-def min_missed_slider(max_missed):
-    """Slider for the minimum missed calls, kept within 1..max_missed as filters change."""
-    if max_missed <= 1:   # a slider needs min < max
-        return 1
-    current = st.session_state.get("min_missed", DEFAULT_MIN_MISSED)
-    st.session_state.min_missed = min(max(int(current), 1), max_missed)
-    return st.slider("Minimum missed calls", min_value=1, max_value=max_missed, step=1,
-                     key="min_missed")
-
-
 def adoption_section(f, split, no_support):
     adopted = split.set_index("slice").loc["Adopted the tool"]
     st.subheader("Adoption Percentage", anchor=False)
@@ -289,27 +272,6 @@ def adoption_section(f, split, no_support):
                    text_alignment="center")
     st.download_button("Download CSV", with_filters(split, f).to_csv(index=False),
                        "adoption_split.csv", "text/csv", icon=":material/download:")
-
-
-def trends_section(f):
-    all_missed = ui.q(metrics.repeat_non_users, f, min_missed=1, exclude_no_support=True)
-    st.subheader("Trends", anchor=False, help=REPEAT_HELP)
-    with st.container(key="card_trends"):
-        if all_missed.empty:
-            st.info("No tool-enabled agent used the interpreter instead of the tool for these "
-                    "filters.", icon="🎉")
-            return
-        min_missed = min_missed_slider(int(all_missed["missed_calls"].max()))
-        agents = all_missed[all_missed["missed_calls"] >= min_missed].reset_index(drop=True)
-        ui.show(repeat_non_users_chart(agents.head(TOP_AGENTS)))
-        st.markdown(f"**{len(agents):,}** agents with **{int(agents['missed_calls'].sum()):,}** "
-                    f"missed calls (at least {min_missed} each)")
-        if len(agents) > TOP_AGENTS:
-            st.caption(f"Showing {TOP_AGENTS} of {len(agents):,} agents; the CSV includes all.")
-    calls = ui.q(metrics.missed_call_details, f, min_missed=int(min_missed), exclude_no_support=True)
-    st.download_button("Download CSV", calls.to_csv(index=False),
-                       f"missed_calls_{f.start:%Y-%m-%d}_to_{f.end:%Y-%m-%d}.csv",
-                       "text/csv", icon=":material/download:", key="missed_calls_csv")
 
 
 def _set_month(label):
@@ -416,16 +378,121 @@ def language_section(f):
                        "text/csv", icon=":material/download:", key="language_csv")
 
 
+def mmss(seconds):
+    """Seconds as m:ss ('—' when missing)."""
+    if pd.isna(seconds):
+        return "—"
+    total = int(round(seconds))
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def saving_headline(handle):
+    """'The tool saves Xm Ys per call vs the interpreter' from the handle-time rows."""
+    aht = handle.set_index("group")["aht_sec"]
+    diff = aht["Interpreter"] - aht["Translation tool"]
+    if pd.isna(diff):
+        return "Not enough tool and interpreter calls in these dates to compare"
+    total = int(round(abs(diff)))
+    span = f"{total // 60}m {total % 60}s"
+    if diff >= 0:
+        return f"The tool saves {span} per call vs the interpreter"
+    return f"The tool takes {span} longer per call than the interpreter"
+
+
+def handle_time_chart(handle):
+    """Vertical AHT bars (minutes) per support type, m:ss on each bar, calls in the hover."""
+    minutes = handle["aht_sec"] / 60
+    top = max(float(minutes.max()) if minutes.notna().any() else 1.0, 1.0)
+    step = 2 if top <= 16 else 5
+    ticks = list(range(0, int(top * 1.18) + step, step))
+    fig = go.Figure(go.Bar(
+        x=handle["group"], y=minutes, customdata=handle[["calls", "aht_mmss"]],
+        marker=dict(color=[SUPPORT_COLORS[g] for g in handle["group"]], line=dict(width=0)),
+        text=handle["aht_mmss"], textposition="outside", cliponaxis=False,
+        textfont=dict(size=14, color="#1D3557"),
+        hovertemplate=("<b>%{x}</b><br>Calls: %{customdata[0]:,}<br>"
+                       "AHT: %{customdata[1]}<extra></extra>")))
+    fig.update_layout(
+        template=ui.PLOTLY_TEMPLATE, height=AHT_HEIGHT, bargap=0.35, showlegend=False,
+        hovermode="closest", dragmode=False, margin=dict(l=10, r=10, t=24, b=10), font=dict(size=12),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(showgrid=False, fixedrange=True, tickfont=dict(size=13)),
+        yaxis=dict(title_text="Average handle time (m:ss)", range=[0, top * 1.18],
+                   tickvals=ticks, ticktext=[f"{t}:00" for t in ticks],
+                   gridcolor="rgba(31,41,55,0.10)", zeroline=False, fixedrange=True))
+    return fig
+
+
+def handle_time_section(f):
+    """Average handle time for native speakers, the translation tool and the interpreter."""
+    handle = ui.q(metrics.handle_time_by_support, f)
+    handle["aht_mmss"] = handle["aht_sec"].map(mmss)
+    st.subheader("Handle Time by Support Type", anchor=False, help=AHT_HELP)
+    with st.container(key="card_aht"):
+        st.markdown(f"<p class='aht-headline'>{saving_headline(handle)}</p>",
+                    unsafe_allow_html=True)
+        ui.show(handle_time_chart(handle))
+    csv = pd.DataFrame({"group": handle["group"], "calls": handle["calls"],
+                        "aht_seconds": handle["aht_sec"].round(1), "aht_mm_ss": handle["aht_mmss"]})
+    st.download_button("Download CSV", with_filters(csv, f).to_csv(index=False),
+                       "handle_time_by_support_type.csv", "text/csv",
+                       icon=":material/download:", key="aht_csv")
+
+
+def fte_month_chart(months):
+    """Small bar chart of FTE saved per month, with the value above each bar."""
+    labels = pd.to_datetime(months["month_start"]).dt.strftime("%b %Y")
+    top = max(float(months["fte_saved"].max()), 0.1)
+    fig = go.Figure(go.Bar(
+        x=labels, y=months["fte_saved"], customdata=months[["tool_calls", "hours_saved"]],
+        marker=dict(color=SUPPORT_COLORS["Translation tool"], line=dict(width=0)),
+        texttemplate="%{y:.2f}", textposition="outside", cliponaxis=False,
+        textfont=dict(size=12, color="#1D3557"),
+        hovertemplate=("<b>%{x}</b><br>FTE saved: %{y:.2f}<br>Hours saved: %{customdata[1]:,.0f}"
+                       "<br>Tool calls: %{customdata[0]:,}<extra></extra>")))
+    fig.update_layout(
+        template=ui.PLOTLY_TEMPLATE, height=FTE_MONTH_HEIGHT, bargap=0.3, showlegend=False,
+        hovermode="closest", dragmode=False, margin=dict(l=10, r=10, t=20, b=10), font=dict(size=12),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(type="category", showgrid=False, fixedrange=True),
+        yaxis=dict(title_text="FTE saved", range=[0, top * 1.25], tickformat=".1f",
+                   gridcolor="rgba(31,41,55,0.10)", zeroline=False, fixedrange=True))
+    return fig
+
+
+def fte_section(f):
+    """Agent time the tool saved vs the interpreter, as FTE, with a by-month chart."""
+    total = ui.q(metrics.agent_time_saved, f).iloc[0]
+    months = ui.q(metrics.agent_time_saved, f, grain="month")
+    st.subheader("Agent Time Saved (FTE)", anchor=False,
+                 help=FTE_HELP.format(h=metrics.cfg.FTE_HOURS_PER_WEEK))
+    with st.container(key="card_fte"):
+        st.markdown(f"<div class='fte-big'>{total['fte_saved']:.2f} <span>FTE saved</span></div>",
+                    unsafe_allow_html=True)
+        st.markdown(f"**{total['hours_saved']:,.0f}** hours of agent time saved on "
+                    f"**{int(total['tool_calls']):,}** tool calls", text_alignment="center")
+        ui.show(fte_month_chart(months))
+    csv = months.assign(month=pd.to_datetime(months["month_start"]).dt.strftime("%Y-%m"))[
+        ["month", "tool_calls", "hours_saved", "weeks", "fte_saved"]].round(
+        {"hours_saved": 2, "weeks": 3, "fte_saved": 3})
+    st.download_button("Download CSV", with_filters(csv, f).to_csv(index=False),
+                       "agent_time_saved_by_month.csv", "text/csv",
+                       icon=":material/download:", key="fte_csv")
+
+
 def overview():
-    """2 x 2 grid: adoption donut and adoption by month on top, the language table and
-    Trends below, each with a CSV download for the active filters. No-support calls are
+    """Executive overview for all teams, supervisors and languages (supervisors stay
+    locked to their own team), with one date-range picker instead of the Filters menu.
+    Rows: adoption donut | adoption by month; language table | handle time by support
+    type; agent time saved (FTE). Each card has a CSV download. No-support calls are
     left out of every Overview number. Viewers see only the donut and its CSV.
-    On a phone the columns stack in reading order (donut, month, language, Trends)."""
-    f = ui.page_header("Translation Tool Adoption", centered=True, show_filters=False, art=HEADER_ART)
+    On a phone the columns stack in reading order."""
+    ui.title_row("Translation Tool Adoption", art=HEADER_ART)
+    f = ui.overview_filters()
     split = ui.q(metrics.adoption_split, f, exclude_no_support=True)
     if int(split["calls"].sum()) == 0:
-        ui.no_data("tool-enabled eligible calls in this selection (the tool may not be "
-                   "rolled out yet for these teams and dates)")
+        st.info("No tool-enabled eligible calls in these dates (the tool may not be rolled out "
+                "yet). Try a wider date range.", icon="🔎")
         st.stop()
     no_support = int(ui.q(metrics.kpi_summary, f).iloc[0]["enabled_no_support_calls"])
 
@@ -434,7 +501,7 @@ def overview():
         top_left, top_right = st.columns(2, gap="large")
         with top_left:
             adoption_section(f, split, no_support)
-        if ui.role() == "viewer":   # no agent names, trends or breakdowns for viewers
+        if ui.role() == "viewer":   # no breakdowns for viewers
             ui.footnote()
             return
         with top_right:
@@ -444,7 +511,11 @@ def overview():
         with bottom_left:
             language_section(f)
         with bottom_right:
-            trends_section(f)
+            handle_time_section(f)
+    with st.container(key="row_third"):
+        third_left, _ = st.columns(2, gap="large")
+        with third_left:
+            fte_section(f)
     ui.footnote()
 
 
@@ -458,20 +529,20 @@ PAGE_SPECS = {
     "data_quality": ("views/5_Data_Quality.py", "Data Quality", "🧪", "Data_Quality"),
     "user_management": ("views/6_User_management.py", "User management", "🔐", "User_management"),
 }
+MENU_HIDDEN = {"user_management"}   # opened from the admin's User management menu instead
 
 
 def pending_count():
     try:
         return len(users.list_users("pending"))
-    except Exception:   # store unavailable: show the page without a count
+    except Exception:   # store unavailable: show the menu without a count
         return 0
 
 
-def make_pages(visible, with_default=True, titles=None):
+def make_pages(visible, with_default=True):
     """All pages; those not in `visible` are registered hidden (not in the menu),
     so their URL still resolves and can show the no-access message."""
-    titles = titles or {}
-    return {key: st.Page(src, title=titles.get(key, title), icon=icon, url_path=path,
+    return {key: st.Page(src, title=title, icon=icon, url_path=path,
                          default=with_default and key == "overview",
                          visibility="visible" if key in visible else "hidden")
             for key, (src, title, icon, path) in PAGE_SPECS.items()}
@@ -479,16 +550,15 @@ def make_pages(visible, with_default=True, titles=None):
 
 user = auth.gate(make_pages)
 allowed = auth.allowed_pages(user)
-titles = {}
-if "user_management" in allowed and (n := pending_count()):
-    titles["user_management"] = f"User management ({n})"
-pages = make_pages(allowed, titles=titles)
+pages = make_pages(allowed - MENU_HIDDEN)
 page = st.navigation(list(pages.values()), position="top")
-auth.user_bar(user)
 key = next(k for k, p in pages.items() if p is page)
+is_admin = "user_management" in allowed
+auth.account_menu(user, key, pending=pending_count() if is_admin else 0,
+                  user_management=pages["user_management"] if is_admin else None)
 if key not in allowed:
     st.error(auth.DENIED, icon="🔒")
     st.stop()
-if key != "user_management":
+if key not in ("overview", "user_management"):   # the Overview has its own date picker
     ui.render_filter_bar()
 page.run()

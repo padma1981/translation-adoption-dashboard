@@ -270,15 +270,65 @@ def change_password_screen():
             st.rerun()
 
 
-def user_bar(user):
-    """Top-right: who is signed in, Change password and Sign out."""
+# The account menu sits at the right end of the top navigation row. Streamlit draws
+# that row in its fixed header (stToolbar), so the menu is pinned over the header
+# with position: fixed, and the toolbar keeps MENU_SPACE free at its right end so its
+# own controls (Deploy, ⋮) move left of the menu instead of under it. The button is
+# sized like the tab labels (28px tall, centered on the 60px header).
+MENU_SPACE = "13.5rem"
+ACCOUNT_MENU_CSS = f"""
+<style>
+[data-testid="stToolbar"] {{ padding-right: {MENU_SPACE}; box-sizing: border-box; }}
+.st-key-account_menu {{
+  position: fixed; top: 1px; right: 1rem; height: 3.75rem; z-index: 999991;
+  width: auto !important; max-width: calc({MENU_SPACE} - 1.5rem);
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-end;
+}}
+.st-key-account_menu [data-testid="stPopover"] button {{
+  min-height: 28px; height: 28px; padding: 0 0.6rem; border-radius: 0.5rem;
+  background: #FFFFFF; border: 1px solid rgba(49, 51, 63, 0.2); max-width: 100%;
+}}
+.st-key-account_menu [data-testid="stPopover"] button p {{
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 0.875rem; font-weight: 600; line-height: 28px;
+}}
+[data-testid="stPopoverBody"]:has(.st-key-account_panel) {{ min-width: 250px; }}
+@media (max-width: 640px) {{   /* person icon and chevron only on a phone */
+  [data-testid="stToolbar"] {{ padding-right: 4.75rem; }}
+  .st-key-account_menu {{ right: 0.5rem; max-width: 4rem; }}
+  .st-key-account_menu [data-testid="stPopover"] button [data-testid="stMarkdownContainer"] {{
+    display: none; }}
+}}
+</style>
+"""
+
+
+def account_menu(user, page_key, pending=0, user_management=None):
+    """Account menu at the right end of the top menu bar. Everyone gets "Signed in as",
+    Change password and Sign out; admins (user_management = the hidden User management
+    page) also get Approve requests (N) and Manage users, which open that page.
+    The popover is keyed by the current page, so it is closed after a page switch."""
     ss = st.session_state
     if notice := ss.pop("_auth_notice", None):
         st.toast(notice, icon="✅")
-    with st.container(horizontal=True, horizontal_alignment="right", vertical_alignment="center",
-                      key="user_bar"):
-        st.markdown(f"Signed in as **{user['name']}** ({user['role']})", width="content")
-        if st.button("Change password", key="change_password_button", type="tertiary"):
-            ss._show_change_password = True
-            st.rerun()
-        st.button("Sign out", key="sign_out_button", on_click=sign_out)
+    admin = user_management is not None
+    st.html(ACCOUNT_MENU_CSS)
+    with st.container(key="account_menu"):
+        with st.popover("User management" if admin else user["name"], icon=":material/person:",
+                        width="content", key=f"account_popover_{page_key}"):
+            with st.container(key="account_panel"):
+                st.markdown(f"Signed in as **{user['name']}** ({user['role']})")
+                if st.button("Change password", key="change_password_button", type="tertiary",
+                             icon=":material/key:"):
+                    ss._show_change_password = True
+                    st.rerun()
+                st.button("Sign out", key="sign_out_button", type="tertiary", on_click=sign_out,
+                          icon=":material/logout:")
+                if admin:
+                    st.divider()
+                    if st.button(f"Approve requests ({pending})", key="approve_requests_button",
+                                 type="tertiary", icon=":material/how_to_reg:"):
+                        st.switch_page(user_management)
+                    if st.button("Manage users", key="manage_users_button", type="tertiary",
+                                 icon=":material/manage_accounts:"):
+                        st.switch_page(user_management)

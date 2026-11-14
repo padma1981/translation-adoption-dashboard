@@ -413,6 +413,84 @@ def operational_by_path(start_date=None, end_date=None, teams=None, supervisors=
     return df.drop(columns=["talk_sec", "hold_sec", "handle_sec", "csat_sum"])
 
 
+# Support types compared on the Overview, keyed by v_operational_daily.segment.
+# native_exempt = in-scope language call handled by an agent native in it.
+SUPPORT_GROUPS = {"native_exempt": "Native speaker", "translation_tool": "Translation tool",
+                  "interpreter_line": "Interpreter"}
+
+
+def handle_time_by_support(start_date=None, end_date=None, teams=None, supervisors=None,
+                           languages=None, by_language=False, con=None) -> pd.DataFrame:
+    """Calls, handle seconds and average handle time (aht_sec) for native-speaker calls and
+    eligible calls with the translation tool or the interpreter line (no support excluded).
+    One row per group (always all three, in SUPPORT_GROUPS order), or per language x group."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    keys = (["language"] if by_language else []) + ["segment"]
+    df = _sum_by("v_operational_daily", keys, ["calls", "handle_sec"], f, con)
+    df = df[df["segment"].isin(SUPPORT_GROUPS)]
+    if not by_language:
+        df = (df.set_index("segment").reindex(list(SUPPORT_GROUPS), fill_value=0)
+              .rename_axis("segment").reset_index())
+    df["group"] = df["segment"].map(SUPPORT_GROUPS)
+    df["aht_sec"] = _ratio(df["handle_sec"], df["calls"])
+    return df[keys + ["group", "calls", "handle_sec", "aht_sec"]].reset_index(drop=True)
+
+
+def _date_bounds(start_date, end_date, con):
+    """Start and end dates, defaulting to the first and last call date in the data."""
+    if start_date is None or end_date is None:
+        lo, hi = (con or get_connection()).execute(
+            "select min(call_date), max(call_date) from v_call_enriched").fetchone()
+        start_date, end_date = start_date or lo, end_date or hi
+    return pd.Timestamp(start_date).normalize(), pd.Timestamp(end_date).normalize()
+
+
+def agent_time_saved(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,
+                     grain=None, con=None) -> pd.DataFrame:
+    """Agent time the tool saved compared with the interpreter line, as hours and FTE.
+
+    Per language: tool calls x (interpreter AHT - tool AHT), both AHTs over the whole
+    selected range, so the language mix doesn't distort it. A language with no tool or
+    no interpreter calls in the range saves nothing. FTE saved = hours saved /
+    (config.FTE_HOURS_PER_WEEK x weeks), weeks = days in the range / 7.
+    One row for the range, or with grain="month" one row per month in the range (months
+    without tool calls show 0); a month's weeks count only its days inside the range."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    start, end = _date_bounds(start_date, end_date, con)
+    aht = handle_time_by_support(*f, by_language=True, con=con).pivot(
+        index="language", columns="segment", values="aht_sec")
+    saved = (aht.get("interpreter_line") - aht.get("translation_tool")
+             if {"interpreter_line", "translation_tool"} <= set(aht.columns) else pd.Series(dtype=float))
+    saved_sec = saved.fillna(0).to_dict()
+
+    where, params = _where(*f)
+    tool = (con or get_connection()).execute(f"""
+        select month_start, language, coalesce(sum(calls), 0)::bigint as tool_calls
+        from v_operational_daily where segment = 'translation_tool' and {where}
+        group by all""", params).df()
+    tool["hours_saved"] = tool["tool_calls"] * tool["language"].map(saved_sec).fillna(0) / 3600
+
+    if grain == "month":
+        months = pd.date_range(start.replace(day=1), end, freq="MS")
+        df = pd.DataFrame({"month_start": months.date})
+        first = months.map(lambda m: max(m, start))
+        last = months.map(lambda m: min(m + pd.offsets.MonthEnd(0), end))
+        df["days"] = (last - first).days + 1
+        tool["month_start"] = pd.to_datetime(tool["month_start"]).dt.date
+        sums = tool.groupby("month_start")[["tool_calls", "hours_saved"]].sum()
+        df = df.join(sums, on="month_start")
+    else:
+        df = pd.DataFrame({"start_date": [start.date()], "end_date": [end.date()],
+                           "days": [(end - start).days + 1],
+                           "tool_calls": [tool["tool_calls"].sum()],
+                           "hours_saved": [tool["hours_saved"].sum()]})
+    df["tool_calls"] = df["tool_calls"].fillna(0).astype("int64")
+    df["hours_saved"] = df["hours_saved"].fillna(0.0).astype(float)
+    df["weeks"] = df["days"] / 7
+    df["fte_saved"] = _ratio(df["hours_saved"], cfg.FTE_HOURS_PER_WEEK * df["weeks"])
+    return df.drop(columns=["days"])
+
+
 # --- Cost --------------------------------------------------------------------
 
 def interpreter_spend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,

@@ -332,6 +332,67 @@ def test_overview_adoption_by_month_and_language():
         "language").loc["Spanish", "counted_calls"] == 5
 
 
+# --- Handle time by support type and agent time saved -----------------------------------
+# June 2026. Spanish: tool AHT 600 s, interpreter 1500 s (900 s saved per tool call).
+# Mandarin: tool 600 s, interpreter 2400 s (1800 s saved). Native Spanish call 450 s.
+AHT_CALLS = [
+    call("ES_T1", "FLU", "Spanish", "2026-06-10 09:00", talk=500, hold=40, wrap=60),
+    call("ES_T2", "FLU", "Spanish", "2026-06-10 10:00", talk=500, hold=40, wrap=60),
+    call("ES_I", "FLU", "Spanish", "2026-06-11 09:00", talk=1200, hold=200, wrap=100),
+    call("ES_NS", "FLU", "Spanish", "2026-06-11 11:00", talk=3000, hold=0, wrap=0),   # no support
+    call("ZH_T", "MIS", "Mandarin", "2026-06-10 09:00", talk=500, hold=40, wrap=60),
+    call("ZH_I", "MIS", "Mandarin", "2026-06-11 09:00", talk=2000, hold=300, wrap=100),
+    call("NAT_ES", "NAT", "Spanish", "2026-06-10 09:00", talk=350, hold=40, wrap=60),
+    call("EN", "FLU", "English", "2026-06-12 09:00", talk=100, hold=0, wrap=0),
+]
+AHT_SESSIONS = [session(f"S_{c}", a, f"2026-06-10 {h}:01", call_id=c, language=lang)
+                for c, a, h, lang in [("ES_T1", "FLU", "09", "Spanish"), ("ES_T2", "FLU", "10", "Spanish"),
+                                      ("ZH_T", "MIS", "09", "Mandarin")]]
+AHT_INTERP = [interpreter("I_ES", "ES_I", 20), interpreter("I_ZH", "ZH_I", 35)]
+
+
+@pytest.fixture(scope="module")
+def aht_con():
+    return m.connect(tables=build_tables(AHT_CALLS, AHT_SESSIONS, AHT_INTERP))
+
+
+def test_handle_time_by_support(aht_con):
+    df = m.handle_time_by_support(con=aht_con).set_index("group")
+    assert df.index.tolist() == ["Native speaker", "Translation tool", "Interpreter"]
+    assert df["calls"].to_dict() == {"Native speaker": 1, "Translation tool": 3, "Interpreter": 2}
+    assert df["aht_sec"].to_dict() == {"Native speaker": 450, "Translation tool": 600,
+                                       "Interpreter": 1950}   # no-support and English left out
+    empty = m.handle_time_by_support(languages=["Vietnamese"], con=aht_con)
+    assert empty["calls"].tolist() == [0, 0, 0] and empty["aht_sec"].isna().all()
+
+
+def test_agent_time_saved_per_language(aht_con):
+    """Spanish 2 x 900 s + Mandarin 1 x 1800 s = 1 hour; 4 weeks x 40 h -> 1/160 FTE.
+    (Pooled AHTs would give 3 x 1350 s = 1.125 h: the per-language split matters.)"""
+    df = m.agent_time_saved("2026-06-01", "2026-06-28", con=aht_con).iloc[0]
+    assert df["tool_calls"] == 3
+    assert df["hours_saved"] == pytest.approx(1.0)
+    assert df["weeks"] == pytest.approx(4.0)
+    assert df["fte_saved"] == pytest.approx(1 / (cfg.FTE_HOURS_PER_WEEK * 4))
+    es = m.agent_time_saved("2026-06-01", "2026-06-28", languages=["Spanish"], con=aht_con).iloc[0]
+    assert es["hours_saved"] == pytest.approx(0.5)
+
+
+def test_agent_time_saved_by_month(aht_con):
+    df = m.agent_time_saved("2026-05-04", "2026-07-31", grain="month", con=aht_con)
+    assert [str(d) for d in df["month_start"]] == ["2026-05-01", "2026-06-01", "2026-07-01"]
+    assert df["tool_calls"].tolist() == [0, 3, 0]   # months without tool calls show 0
+    assert df["hours_saved"].tolist() == pytest.approx([0, 1, 0])
+    assert df["weeks"].tolist() == pytest.approx([28 / 7, 30 / 7, 31 / 7])   # May starts on the 4th
+    assert df["fte_saved"].tolist() == pytest.approx([0, 7 / (30 * cfg.FTE_HOURS_PER_WEEK), 0])
+
+
+def test_agent_time_saved_needs_both_paths(aht_con):
+    """A language with tool calls but no interpreter calls in range saves nothing."""
+    df = m.agent_time_saved("2026-06-10", "2026-06-10", con=aht_con).iloc[0]
+    assert df["tool_calls"] == 3 and df["hours_saved"] == 0 and df["fte_saved"] == 0
+
+
 def test_language_tool_use_table():
     con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
     df = m.language_tool_use(con=con).set_index("language")

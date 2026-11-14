@@ -322,13 +322,14 @@ def test_supervisor_scope_forces_their_team_in_every_metrics_call(monkeypatch):
         assert not at.exception, (page, at.exception)
         assert calls, page
         assert {(teams, sups) for _, teams, sups in calls} == {(("Atlas",), ("Rachel Young",))}, page
-        assert at.session_state["teams"] == ["Atlas"]
-        assert at.session_state["supervisors"] == ["Rachel Young"]
+        if page:   # the Overview has no Filters menu; its data is still scoped (above)
+            assert at.session_state["teams"] == ["Atlas"]
+            assert at.session_state["supervisors"] == ["Rachel Young"]
     locked = [at.multiselect(key="_w_teams"), at.multiselect(key="_w_supervisors")]
     assert [m.value for m in locked] == [["Atlas"], ["Rachel Young"]]
     assert all(m.disabled for m in locked) and not at.multiselect(key="_w_languages").disabled
     # The locked team doesn't count as a changed filter; the summary names it.
-    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters"]
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Sam Lee", "Filters"]
     assert any("Atlas · Rachel Young · All languages" in m.value for m in at.markdown)
 
 
@@ -355,3 +356,27 @@ def test_viewer_sees_only_the_overview_donut():
         at.switch_page(page).run()
         assert errors(at) == ["You don't have access to this page."], page
         assert not at.get("download_button"), page
+
+
+@pytest.mark.parametrize("role,team", [("supervisor", "Atlas"), ("viewer", "")])
+def test_non_admin_account_menu(role, team):
+    """Supervisors and viewers get a small menu with their name: no User management."""
+    make_user("sam", role=role, team=team)
+    at = signed_in(new_app(), session_of("sam")).run()
+    assert not at.exception, at.exception
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Sam Lee"]
+    assert any(m.value == f"Signed in as **Sam Lee** ({role})" for m in at.markdown)
+    labels = [b.label for b in at.button]
+    assert "Change password" in labels and "Sign out" in labels
+    assert not [lbl for lbl in labels if lbl.startswith("Approve requests") or lbl == "Manage users"]
+
+
+def test_admin_menu_shows_pending_count_and_opens_user_management():
+    make_user(status="pending")
+    at = signed_in(new_app()).run()
+    assert not at.exception, at.exception
+    approve = at.button(key="approve_requests_button")
+    assert approve.label == "Approve requests (1)"
+    approve.click().run()
+    assert not at.exception, at.exception
+    assert "Pending requests (1)" in [h.value for h in at.subheader]

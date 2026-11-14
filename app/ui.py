@@ -386,14 +386,68 @@ def _describe(values, everything):
 HEADER_ROW_CSS = """
 <style>
 .st-key-header_row .page-art { display: flex; justify-content: flex-end; }
-.st-key-header_row .page-art img { height: 170px; width: auto; max-width: 100%; }
+.st-key-header_row .page-art img { height: 165px; width: auto; max-width: 100%;
+  filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.18)); }
 @media (max-width: 640px) {   /* small under the title; the empty spacer takes no room */
   .st-key-header_row [data-testid="stColumn"]:first-child { display: none; }
   .st-key-header_row .page-art { justify-content: center; }
-  .st-key-header_row .page-art img { height: 84px; }
+  .st-key-header_row .page-art img { height: 90px; }
 }
 </style>
 """
+
+
+def title_row(title, art=None, centered=True):
+    """Page title; with art (HTML), a header row with the title centered and the art
+    on the right (stacking under the title on a phone)."""
+    if not art:
+        st.title(title, anchor=False, text_alignment="center" if centered else "left")
+        return
+    st.html(HEADER_ROW_CSS)
+    with st.container(key="header_row"):
+        _, mid, right = st.columns([1, 2, 1], vertical_alignment="center")
+        mid.title(title, anchor=False, text_alignment="center")
+        with right:
+            st.html(art)
+
+
+# --- Overview date range -------------------------------------------------------------
+# The Overview has no Filters menu: one date-range picker, all teams, supervisors and
+# languages (a supervisor's data is still limited to their team by scoped()).
+# The range lives in ov_start / ov_end; the widget's own key can be dropped by
+# Streamlit when another page runs, so it is re-seeded from them.
+
+OVERVIEW_DATES_CSS = """
+<style>
+.st-key-ov_date_bar { margin: -0.25rem 0 0.25rem; }
+</style>
+"""
+
+
+def _overview_dates_changed():
+    ss = st.session_state
+    picked = ss.get("_w_ov_dates") or ()
+    if len(picked) == 2:   # a range picker gives one date until the end is chosen
+        ss.ov_start, ss.ov_end = picked
+
+
+def overview_filters() -> Filters:
+    """Draw the Overview's right-aligned date-range picker (default: the full data range)
+    and return Filters for those dates with every team, supervisor and language."""
+    opts, ss = options(), st.session_state
+    lo, hi = opts["min_date"], opts["max_date"]
+    start, end = ss.get("ov_start"), ss.get("ov_end")
+    if not (isinstance(start, date) and isinstance(end, date) and lo <= start <= end <= hi):
+        ss.ov_start, ss.ov_end = lo, hi
+    if "_w_ov_dates" not in ss:
+        ss._w_ov_dates = (ss.ov_start, ss.ov_end)
+    st.html(OVERVIEW_DATES_CSS)
+    with st.container(horizontal=True, horizontal_alignment="right", key="ov_date_bar"):
+        st.date_input("Date range", key="_w_ov_dates", min_value=lo, max_value=hi,
+                      format="YYYY-MM-DD", on_change=_overview_dates_changed, width=260,
+                      help="The Overview covers all teams, supervisors and languages. "
+                           "Use the other pages to filter further.")
+    return scoped(Filters(ss.ov_start, ss.ov_end, None, None, tuple(opts["languages"])))
 
 
 def page_header(title, subtitle=None, require_data=True, centered=False,
@@ -401,15 +455,7 @@ def page_header(title, subtitle=None, require_data=True, centered=False,
     """Title (with optional decorative art (HTML) on the right of a header row),
     active filter summary (unless show_filters is False), and stops the page if
     filters are invalid or return no eligible calls. Returns the active Filters."""
-    if art:   # header row: empty spacer, centered title, art; stacks on a phone
-        st.html(HEADER_ROW_CSS)
-        with st.container(key="header_row"):
-            _, mid, right = st.columns([1, 2, 1], vertical_alignment="center")
-            mid.title(title, anchor=False, text_alignment="center")
-            with right:
-                st.html(art)
-    else:
-        st.title(title, text_alignment="center" if centered else "left")
+    title_row(title, art, centered)
     f = st.session_state.filters
     if show_filters:
         opts = options()

@@ -8,6 +8,7 @@ from tests.conftest import new_app, signed_in
 
 PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py",
          "views/3_Operational_Impact.py", "views/4_Cost.py", "views/5_Data_Quality.py"]
+AGENTS = PAGES[1]
 
 
 def run_page(page, **state):
@@ -51,20 +52,19 @@ def test_page_renders_with_narrow_filters(page):
 
 
 def test_start_after_end_shows_friendly_message():
-    at = run_page(None, preset="Custom", start_date=date(2026, 9, 30), end_date=date(2026, 9, 1))
+    at = run_page(AGENTS, preset="Custom", start_date=date(2026, 9, 30), end_date=date(2026, 9, 1))
     assert not at.exception
     assert any("Start date is after end date" in w.value for w in at.warning)
 
 
 def test_empty_selection_shows_friendly_message():
-    at = run_page(None, teams=[])
+    at = run_page(AGENTS, teams=[])
     assert not at.exception
     assert any("Select at least one team" in w.value for w in at.warning)
 
 
 def test_preset_sets_dates():
-    at = signed_in(new_app())
-    at.run()
+    at = run_page(AGENTS)
     at.selectbox(key="_w_preset").set_value("Last 7 days").run()
     assert at.session_state["start_date"] == date(2026, 9, 24)
     assert at.session_state["end_date"] == date(2026, 9, 30)
@@ -90,7 +90,8 @@ def test_overview_adoption_card():
     assert not [m for m in at.markdown if m.value.startswith("**Apr")]   # no date range line
     assert not [c for c in at.caption if c.value.startswith("Teams:")]
     assert [h.value for h in at.subheader] == ["Adoption Percentage", "Adoption by Month",
-                                               "Calls vs Tool Use by Language", "Trends"]
+                                               "Calls vs Tool Use by Language",
+                                               "Handle Time by Support Type", "Agent Time Saved (FTE)"]
     line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
     assert line.value == "**8,114** of **12,836** eligible calls adopted the tool"   # no support excluded
     assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
@@ -98,48 +99,6 @@ def test_overview_adoption_card():
     assert any(c.value == "2,008 eligible calls had no language support and aren't counted"
                for c in at.caption)
     assert not [c for c in at.caption if "Contact center calls" in c.value]
-
-
-def test_overview_repeat_non_users():
-    at = run_page(None)
-    sub = [h for h in at.subheader if h.value == "Trends"][0]
-    assert sub.help.startswith("Agents whose tool was enabled but who handled eligible calls")
-    assert "no language support are excluded" in sub.help
-    slider = at.slider(key="min_missed")
-    assert (slider.value, slider.min, slider.max) == (3, 1, 74)   # max = most missed by one agent
-    line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
-    assert line.value == "**143** agents with **4,722** missed calls (at least 3 each)"   # interpreter only
-    assert any(c.value == "Showing 10 of 143 agents; the CSV includes all." for c in at.caption)
-    at.slider(key="min_missed").set_value(40).run()
-    line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
-    assert line.value == "**48** agents with **2,326** missed calls (at least 40 each)"
-    at.slider(key="min_missed").set_value(60).run()
-    assert not at.exception
-    line = [m for m in at.markdown if "missed calls (at least" in m.value][0]
-    assert line.value == "**3** agents with **202** missed calls (at least 60 each)"
-    assert not [c for c in at.caption if c.value.startswith("Showing")]
-
-
-def test_overview_slider_clamps_to_new_max():
-    """Narrowing the filters lowers the slider's max and pulls a higher value down to it."""
-    at = run_page(None)
-    at.slider(key="min_missed").set_value(70).run()
-    at.session_state["teams"] = ["Echo"]
-    at.session_state["languages"] = ["Mandarin"]
-    at.run()
-    assert not at.exception, at.exception
-    slider = at.slider(key="min_missed")
-    assert slider.max < 70 and slider.value == slider.max
-
-
-def test_overview_trends_chart_single_series():
-    import plotly.io as pio
-    at = run_page(None)
-    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
-    assert [t.type for t in fig.data] == ["bar"]
-    assert fig.layout.yaxis.tickfont.color == "#1D3557" and fig.layout.yaxis.tickfont.size == 13
-    assert fig.data[0].marker.color == "#F4A261" and not fig.layout.showlegend
-    assert list(fig.data[0].x[:3]) == sorted(fig.data[0].x, reverse=True)[:3]
 
 
 def month_bars(at):
@@ -225,7 +184,7 @@ def test_stale_cached_options_without_supervisors(monkeypatch):
         assert not at.exception, at.exception
         assert not at.error
     assert "supervisors" in ui._options(ui.VERSION)
-    at = run_page(None)
+    at = run_page(AGENTS)
     at.button(key="reset_filters").click().run()
     assert not at.exception, at.exception
 
@@ -243,10 +202,10 @@ def test_session_with_preset_but_no_supervisors(page):
         at.switch_page(page).run()
     assert not at.exception, at.exception
     assert not at.error
-    assert "sites" not in at.session_state and "_w_sites" not in at.session_state
-    assert at.session_state["teams"] == ["Echo"]
-    assert len(at.session_state["supervisors"]) > 1
-    if page:
+    if page:   # the Overview has no Filters menu, so it leaves the filter keys alone
+        assert "sites" not in at.session_state and "_w_sites" not in at.session_state
+        assert at.session_state["teams"] == ["Echo"]
+        assert len(at.session_state["supervisors"]) > 1
         assert "Teams: Echo · Supervisors: all · Languages: Spanish" in filter_line(at)
 
 
@@ -255,27 +214,31 @@ def test_stale_metrics_module_is_reloaded():
     run_page(None)
     import ui
     ui.VERSION = "old"
-    del ui.metrics.repeat_non_users
-    del ui.render_filter_bar
+    del ui.metrics.agent_time_saved
+    del ui.overview_filters
     at = run_page(None)
     assert not at.exception, at.exception
-    assert hasattr(ui.metrics, "repeat_non_users") and hasattr(ui, "render_filter_bar")
+    assert hasattr(ui.metrics, "agent_time_saved") and hasattr(ui, "overview_filters")
 
 
 # --- Filters menu and shared chart template ------------------------------------------------
 
+def filters_label(at):
+    return [p.proto.popover.label for p in at.get("popover") if p.proto.popover.label.startswith("Filters")]
+
+
 def test_filters_menu_summary_and_count():
-    at = run_page(None)
-    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters"]
+    at = run_page(AGENTS)
+    assert filters_label(at) == ["Filters"]
     assert any(m.value == "Apr 1 – Sep 30, 2026 · All teams · All supervisors · All languages"
                for m in at.markdown)
     at.multiselect(key="_w_teams").set_value(["Echo"]).run()
     at.selectbox(key="_w_preset").set_value("Last 30 days").run()
-    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters (2)"]
+    assert filters_label(at) == ["Filters (2)"]
     assert any(m.value == "Sep 1 – Sep 30, 2026 · Echo · All supervisors · All languages"
                for m in at.markdown)
     at.button(key="reset_filters").click().run()
-    assert [p.proto.popover.label for p in at.get("popover")] == ["Filters"]
+    assert filters_label(at) == ["Filters"]
 
 
 def test_every_chart_uses_the_bold_template():
@@ -292,3 +255,85 @@ def test_gradient_colors():
     import ui
     assert ui.gradient_colors([0.4, 0.7, None]) == ["#7FD1C7", "#3730A3", "#CBD5E1"]
     assert ui.label_color("#3730A3") == "#FFFFFF" and ui.label_color("#7FD1C7") == "#1D3557"
+
+
+# --- Executive Overview: date picker, handle time, agent time saved, menus ----------------
+
+def overview_markdown(at, text):
+    return [m.value for m in at.markdown if text in m.value]
+
+
+def test_overview_has_date_picker_not_filters_menu():
+    at = run_page(None)
+    assert not [p for p in at.get("popover") if p.proto.popover.label.startswith("Filters")]
+    picker = at.date_input(key="_w_ov_dates")
+    assert picker.value == (date(2026, 4, 1), date(2026, 9, 30))
+    assert len(at.date_input) == 1
+
+
+def test_overview_ignores_team_and_language_filters():
+    """Other pages' filters don't narrow the Overview: it always covers everything."""
+    at = run_page(None, teams=["Echo"], supervisors=["Cynthia Reyes"], languages=["Mandarin"])
+    assert not at.exception, at.exception
+    assert overview_markdown(at, "eligible calls adopted the tool")[0] == (
+        "**8,114** of **12,836** eligible calls adopted the tool")
+
+
+def test_overview_handle_time_card_full_range():
+    import plotly.io as pio
+    at = run_page(None)
+    assert overview_markdown(at, "The tool saves") == [
+        "<p class='aht-headline'>The tool saves 3m 43s per call vs the interpreter</p>"]
+    fig = pio.from_json(at.get("plotly_chart")[2].proto.spec)
+    bar = fig.data[0]
+    assert list(bar.x) == ["Native speaker", "Translation tool", "Interpreter"]
+    assert list(bar.text) == ["7:29", "9:15", "12:58"]
+    assert list(bar.marker.color) == ["#1D3557", "#0F9D8A", "#F4A261"]
+    assert "Calls: %{customdata[0]:,}" in bar.hovertemplate and "AHT: %{customdata[1]}" in bar.hovertemplate
+    assert fig.layout.template.layout.font.weight == "bold"
+
+
+def test_overview_fte_card_full_range_and_september():
+    import plotly.io as pio
+    at = run_page(None)
+    assert overview_markdown(at, "FTE saved") == ["<div class='fte-big'>0.48 <span>FTE saved</span></div>"]
+    assert overview_markdown(at, "hours of agent time saved") == [
+        "**501** hours of agent time saved on **8,114** tool calls"]
+    sub = [h for h in at.subheader if h.value == "Agent Time Saved (FTE)"][0]
+    assert "40 hours x weeks" in sub.help and "per-language" in sub.help
+    fig = pio.from_json(at.get("plotly_chart")[3].proto.spec)
+    assert list(fig.data[0].x) == ["Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"]
+    assert fig.data[0].y[0] == 0   # before rollout: no tool calls
+    at.date_input(key="_w_ov_dates").set_value((date(2026, 9, 1), date(2026, 9, 30))).run()
+    assert not at.exception, at.exception
+    assert overview_markdown(at, "FTE saved") == ["<div class='fte-big'>0.84 <span>FTE saved</span></div>"]
+    assert overview_markdown(at, "hours of agent time saved")[0].startswith("**143** hours")
+    assert (at.session_state["ov_start"], at.session_state["ov_end"]) == (date(2026, 9, 1),
+                                                                          date(2026, 9, 30))
+
+
+def test_overview_dates_survive_page_switch():
+    """The picked range is kept in ov_start / ov_end and re-seeds the picker when its
+    widget state was dropped (as after visiting another page)."""
+    at = run_page(None)
+    at.date_input(key="_w_ov_dates").set_value((date(2026, 9, 1), date(2026, 9, 30))).run()
+    at.switch_page(AGENTS).run()
+    assert not at.exception, at.exception
+    assert (at.session_state["ov_start"], at.session_state["ov_end"]) == (date(2026, 9, 1),
+                                                                          date(2026, 9, 30))
+    at = signed_in(new_app())   # a fresh run: no widget state yet
+    at.session_state["ov_start"], at.session_state["ov_end"] = date(2026, 8, 1), date(2026, 8, 31)
+    at.run()
+    assert at.date_input(key="_w_ov_dates").value == (date(2026, 8, 1), date(2026, 8, 31))
+
+
+def test_admin_menu_holds_account_and_user_management():
+    at = run_page(None)
+    assert [p.proto.popover.label for p in at.get("popover")] == ["User management"]
+    assert overview_markdown(at, "Signed in as") == ["Signed in as **Test Admin** (admin)"]
+    labels = [b.label for b in at.button]
+    for label in ["Change password", "Sign out", "Approve requests (0)", "Manage users"]:
+        assert label in labels
+    at.button(key="manage_users_button").click().run()
+    assert not at.exception, at.exception
+    assert any(t.value == "User management" for t in at.title)
