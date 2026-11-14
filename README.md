@@ -6,15 +6,14 @@ synthetic**; there is no real customer or employee data in this repo.
 
 Pages: Overview (executive view: adoption donut, adoption by month, calls vs tool
 use by language, handle time by support type, agent time saved in FTE, interpreter
-fees saved, interpreter spend), Agents & Teams, Languages, Operational Impact,
-Data Quality and (admins only) User
+fees saved, interpreter spend), Agents & Teams, Languages and (admins only) User
 management, opened from the User management menu at the right of the top menu bar.
 Sign-in is required; what you see depends on your role.
 
 | Role | Sees |
 |---|---|
 | admin | Every page, all teams, all CSV exports, User management |
-| supervisor | Every page except Data Quality and User management, limited to their own team (Team and Supervisor filters are locked) |
+| supervisor | Every page except User management, limited to their own team (Team and Supervisor filters are locked) |
 | viewer | Overview adoption donut and its summary CSV only |
 
 ## Run locally

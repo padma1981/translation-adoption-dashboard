@@ -99,66 +99,64 @@ SPEND_HELP = ("Interpreter line use per month, split by whether the agent's tran
               "already enabled on the call date. 'Tool was available' is the avoidable part: it "
               "should shrink as adoption grows. Billed at ${rate:.2f} per minute.")
 
-# Decorative header art (original flat illustration, drawn here): a globe with a
-# "Hola" bubble translated into "Hello" (arrow between them) and smaller bubbles in the
-# other in-scope languages. Dashboard palette: navy, teal, indigo, soft orange.
-# st.html strips inline <svg>, so it is shown as a data-URI image.
+# Overview header banner (original, drawn here): a light teal-to-indigo gradient with faint
+# overlapping speech bubbles ("Hola", "Olá", "你好", "Xin chào", "Hello"), a dotted
+# world-map texture and gentle waves, all at 15-25% opacity so the title stays readable.
+# It is the background of the title's container (ui.title_row), as a data-URI SVG.
 _CJK = "'Microsoft YaHei','PingFang SC','Noto Sans SC','Noto Sans CJK SC',sans-serif"
-HEADER_SVG = f"""<svg viewBox="0 0 270 236" width="270" height="236" xmlns="http://www.w3.org/2000/svg"
-     font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-weight="700">
+
+
+def _bubble(x, y, w, text, tail, fill, cjk=False):
+    """A rounded speech bubble at (x, y), w wide, with its tail on the left or right."""
+    tx = x + 18 if tail == "left" else x + w - 18
+    tip = x + 4 if tail == "left" else x + w - 4
+    font = f' font-family="{_CJK}"' if cjk else ""
+    return (f'<g><rect x="{x}" y="{y}" width="{w}" height="46" rx="23" fill="{fill}"/>'
+            f'<path d="M{tx - 8} {y + 40} L{tip} {y + 62} L{tx + 10} {y + 42} Z" fill="{fill}"/>'
+            f'<text x="{x + w / 2}" y="{y + 31}" text-anchor="middle" font-size="22" '
+            f'fill="#1D3557"{font}>{text}</text></g>')
+
+
+BANNER_SVG = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 170"
+     preserveAspectRatio="xMidYMid slice" font-family="'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+     font-weight="700">
   <defs>
-    <marker id="tip" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="5" markerHeight="5"
-            orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 Z" fill="#1D3557"/>
-    </marker>
-    <clipPath id="globe"><circle cx="150" cy="122" r="54"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#D9F2EE"/><stop offset="1" stop-color="#E0E7FF"/>
+    </linearGradient>
+    <pattern id="dots" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="1.8" fill="#1D3557"/>
+    </pattern>
   </defs>
-  <ellipse cx="135" cy="146" rx="130" ry="86" fill="#E3F4F1"/>
-  <!-- globe (drawn at 150,122 r54, placed at 135,142 r60) -->
-  <g transform="translate(135 142) scale(1.111) translate(-150 -122)">
-    <circle cx="150" cy="122" r="54" fill="#0F9D8A"/>
-    <g clip-path="url(#globe)">
-      <path d="M104 92 C118 80 140 84 142 98 C144 110 128 112 126 124 C124 136 108 140 100 128 Z"
-            fill="#7FD1C7"/>
-      <path d="M160 74 C176 72 196 84 194 100 C192 112 178 108 170 118 C162 128 168 142 160 150
-               C150 140 152 126 146 116 C140 104 148 82 160 74 Z" fill="#7FD1C7"/>
-      <path d="M168 156 C180 150 196 152 198 162 C190 176 172 180 160 176 Z" fill="#7FD1C7"/>
-    </g>
-    <g fill="none" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="1.6">
-      <ellipse cx="150" cy="122" rx="24" ry="54"/>
-      <ellipse cx="150" cy="122" rx="44" ry="54"/>
-      <path d="M96 122 H204 M103 95 H197 M103 149 H197"/>
-    </g>
-    <circle cx="150" cy="122" r="54" fill="none" stroke="#1D3557" stroke-width="2.8"/>
+  <rect width="1200" height="170" fill="url(#bg)"/>
+  <!-- dotted world-map texture -->
+  <g fill="url(#dots)" opacity="0.18">
+    <path d="M120 40 C170 20 250 30 270 60 C290 90 240 110 210 130 C180 150 130 140 110 110
+             C90 85 90 55 120 40 Z"/>
+    <path d="M330 90 C360 80 390 100 385 130 C380 160 345 165 330 145 C318 128 315 100 330 90 Z"/>
+    <path d="M470 30 C540 15 640 25 690 45 C740 65 720 95 670 100 C620 105 600 130 560 125
+             C520 120 470 100 455 75 C445 55 450 38 470 30 Z"/>
+    <path d="M760 60 C820 40 900 50 930 75 C960 100 930 130 880 135 C830 140 780 120 760 100
+             C745 85 745 68 760 60 Z"/>
+    <path d="M1010 110 C1050 100 1090 110 1095 130 C1100 150 1060 160 1030 152 C1005 145 995 120
+             1010 110 Z"/>
   </g>
-  <!-- translate arrow from "Hola" to "Hello" -->
-  <path d="M90 34 Q135 4 178 34" fill="none" stroke="#1D3557" stroke-width="3.2"
-        stroke-linecap="round" marker-end="url(#tip)"/>
-  <!-- main bubbles -->
-  <rect x="4" y="32" width="86" height="40" rx="20" fill="#F4A261"/>
-  <path d="M58 70 L84 92 L72 68 Z" fill="#F4A261"/>
-  <text x="47" y="58.5" text-anchor="middle" font-size="19" fill="#1D3557">Hola</text>
-  <rect x="180" y="32" width="86" height="40" rx="20" fill="#3730A3"/>
-  <path d="M212 70 L186 92 L198 68 Z" fill="#3730A3"/>
-  <text x="223" y="58.5" text-anchor="middle" font-size="19" fill="#FFFFFF">Hello</text>
-  <!-- small bubbles -->
-  <rect x="2" y="138" width="58" height="28" rx="14" fill="#1D3557"/>
-  <path d="M52 146 L78 150 L54 158 Z" fill="#1D3557"/>
-  <text x="31" y="157" text-anchor="middle" font-size="14" fill="#FFFFFF">Olá</text>
-  <rect x="208" y="118" width="58" height="28" rx="14" fill="#7FD1C7"/>
-  <path d="M214 126 L190 130 L212 138 Z" fill="#7FD1C7"/>
-  <text x="237" y="137" text-anchor="middle" font-size="14" fill="#1D3557"
-        font-family="{_CJK}">你好</text>
-  <rect x="170" y="202" width="94" height="28" rx="14" fill="#FFFFFF" stroke="#0F9D8A"
-        stroke-width="2"/>
-  <path d="M182 204 L170 192 L194 203 Z" fill="#0F9D8A"/>
-  <text x="217" y="221" text-anchor="middle" font-size="14" fill="#0F9D8A">Xin chào</text>
-  <circle cx="28" cy="208" r="7" fill="#F4A261" opacity="0.45"/>
-  <circle cx="42" cy="104" r="4" fill="#3730A3" opacity="0.35"/>
-  <circle cx="256" cy="100" r="4" fill="#0F9D8A" opacity="0.5"/>
+  <!-- waves -->
+  <g fill="none" stroke="#0F9D8A" stroke-width="3" opacity="0.2">
+    <path d="M0 140 C150 115 300 165 450 140 C600 115 750 165 900 140 C1050 115 1125 150 1200 135"/>
+    <path d="M0 158 C150 133 300 183 450 158 C600 133 750 183 900 158 C1050 133 1125 168 1200 153"/>
+  </g>
+  <!-- speech bubbles, kept clear of the centered title -->
+  <g opacity="0.22">
+    {_bubble(40, 22, 104, "Hola", "right", "#0F9D8A")}
+    {_bubble(118, 70, 92, "Olá", "left", "#818CF8")}
+    {_bubble(250, 30, 100, "你好", "right", "#F4A261", cjk=True)}
+    {_bubble(860, 26, 140, "Xin chào", "left", "#818CF8")}
+    {_bubble(960, 76, 112, "Hello", "right", "#0F9D8A")}
+    {_bubble(1060, 22, 96, "Hola", "left", "#F4A261")}
+  </g>
 </svg>"""
-HEADER_ART = ('<div class="page-art" aria-hidden="true"><img alt="" src="data:image/svg+xml;base64,'
-              + base64.b64encode(HEADER_SVG.encode()).decode() + '"></div>')
+OVERVIEW_BANNER = "data:image/svg+xml;base64," + base64.b64encode(BANNER_SVG.encode()).decode()
 
 CARDS = ["card_adoption", "card_month", "card_language", "card_aht", "card_fte", "card_fees",
          "card_spend"]
@@ -600,7 +598,7 @@ def overview():
     Each card has a CSV download. No-support calls are
     left out of every Overview number. Viewers see only the donut and its CSV.
     On a phone the columns stack in reading order."""
-    ui.title_row("Translation Tool Adoption", art=HEADER_ART)
+    ui.title_row("Translation Tool Adoption", banner=OVERVIEW_BANNER)
     f = ui.overview_filters()
     split = ui.q(metrics.adoption_split, f, exclude_no_support=True)
     if int(split["calls"].sum()) == 0:
@@ -640,14 +638,16 @@ PAGE_SPECS = {
     "overview": (overview, "Overview", "📊", "overview"),
     "agents": ("views/1_Agents_and_Teams.py", "Agents & Teams", "👥", "Agents_and_Teams"),
     "languages": ("views/2_Languages.py", "Languages", "🗣️", "Languages"),
-    "operational": ("views/3_Operational_Impact.py", "Operational Impact", "⏱️", "Operational_Impact"),
+    "operational": ("views/unavailable.py", "Operational Impact", "⏱️", "Operational_Impact"),
     "cost": ("views/4_Cost.py", "Cost", "💵", "Cost"),
-    "data_quality": ("views/5_Data_Quality.py", "Data Quality", "🧪", "Data_Quality"),
+    "data_quality": ("views/unavailable.py", "Data Quality", "🧪", "Data_Quality"),
     "user_management": ("views/6_User_management.py", "User management", "🔐", "User_management"),
 }
 # Not in the top menu: User management opens from the admin's User management menu; the
 # Cost page's content is on the Overview (its URL still works).
 MENU_HIDDEN = {"user_management", "cost"}
+# Removed pages: their old URLs show "This page isn't available." (views/unavailable.py).
+RETIRED = {"operational", "data_quality"}
 
 
 def pending_count():
@@ -674,6 +674,9 @@ key = next(k for k, p in pages.items() if p is page)
 is_admin = "user_management" in allowed
 auth.account_menu(user, key, pending=pending_count() if is_admin else 0,
                   user_management=pages["user_management"] if is_admin else None)
+if key in RETIRED:
+    page.run()
+    st.stop()
 if key not in allowed:
     st.error(auth.DENIED, icon="🔒")
     st.stop()

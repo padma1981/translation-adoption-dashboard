@@ -6,8 +6,7 @@ import pytest
 
 from tests.conftest import new_app, signed_in
 
-PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py",
-         "views/3_Operational_Impact.py", "views/4_Cost.py", "views/5_Data_Quality.py"]
+PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py", "views/4_Cost.py"]
 AGENTS = PAGES[1]
 
 

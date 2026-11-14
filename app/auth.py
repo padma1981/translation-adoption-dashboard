@@ -21,9 +21,8 @@ DEFAULT_TIMEOUT_MIN = 480
 KEEP_ON_SIGN_OUT = ("_failed_logins", "_locked_until", "_requests_sent")
 
 PAGE_ACCESS = {
-    "admin": {"overview", "agents", "languages", "operational", "cost", "data_quality",
-              "user_management"},
-    "supervisor": {"overview", "agents", "languages", "operational", "cost"},
+    "admin": {"overview", "agents", "languages", "cost", "user_management"},
+    "supervisor": {"overview", "agents", "languages", "cost"},
     "viewer": {"overview"},
 }
 DENIED = "You don't have access to this page."

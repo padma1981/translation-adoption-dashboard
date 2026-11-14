@@ -9,9 +9,8 @@ from src import users
 from tests.conftest import ADMIN_PASSWORD, ADMIN_SESSION, new_app, signed_in
 
 GOOD = "Correct1horse"
-DATA_PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py",
-              "views/3_Operational_Impact.py", "views/4_Cost.py"]
-DQ = "views/5_Data_Quality.py"
+DATA_PAGES = [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py", "views/4_Cost.py"]
+GONE = "views/unavailable.py"   # old Operational Impact and Data Quality URLs
 UM = "views/6_User_management.py"
 
 
@@ -295,9 +294,10 @@ def test_break_glass_admin_works_when_store_unavailable(monkeypatch):
 
 def test_page_access_by_role():
     from auth import PAGE_ACCESS   # app/ is on sys.path once the app has run
-    assert PAGE_ACCESS["supervisor"] == {"overview", "agents", "languages", "operational", "cost"}
+    assert PAGE_ACCESS["supervisor"] == {"overview", "agents", "languages", "cost"}
     assert PAGE_ACCESS["viewer"] == {"overview"}
-    assert {"data_quality", "user_management"} <= PAGE_ACCESS["admin"]
+    assert "user_management" in PAGE_ACCESS["admin"]
+    assert not {"operational", "data_quality"} & set().union(*PAGE_ACCESS.values())   # removed
 
 
 def test_supervisor_scope_forces_their_team_in_every_metrics_call(monkeypatch):
@@ -333,8 +333,8 @@ def test_supervisor_scope_forces_their_team_in_every_metrics_call(monkeypatch):
     assert any("Atlas · Rachel Young · All languages" in m.value for m in at.markdown)
 
 
-@pytest.mark.parametrize("page", [DQ, UM])
-def test_supervisor_cannot_open_data_quality_or_user_management(page):
+@pytest.mark.parametrize("page", [UM])
+def test_supervisor_cannot_open_user_management(page):
     make_user()
     at = signed_in(new_app(), session_of("sam")).run()
     at.switch_page(page).run()
@@ -352,7 +352,7 @@ def test_viewer_sees_only_the_overview_donut():
     downloads = at.get("download_button")
     assert len(downloads) == 1 and downloads[0].proto.label == "Download CSV"
     assert not [m for m in at.markdown if "missed calls" in m.value]
-    for page in DATA_PAGES[1:] + [DQ, UM]:
+    for page in DATA_PAGES[1:] + [UM]:
         at.switch_page(page).run()
         assert errors(at) == ["You don't have access to this page."], page
         assert not at.get("download_button"), page
@@ -380,3 +380,14 @@ def test_admin_menu_shows_pending_count_and_opens_user_management():
     approve.click().run()
     assert not at.exception, at.exception
     assert "Pending requests (1)" in [h.value for h in at.subheader]
+
+
+@pytest.mark.parametrize("role,team", [("admin", ""), ("supervisor", "Atlas"), ("viewer", "")])
+def test_removed_pages_show_not_available(role, team):
+    """The old Operational Impact and Data Quality URLs show a message, not an error."""
+    make_user("sam", role=role, team=team)
+    at = signed_in(new_app(), session_of("sam")).run()
+    at.switch_page(GONE).run()
+    assert not at.exception, at.exception
+    assert [i.value for i in at.info] == ["This page isn't available."]
+    assert not errors(at) and not at.get("plotly_chart")

@@ -179,6 +179,12 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
    "interpreter used where tool was available"
 6. **Data Quality**: session linking stats (direct / time match / ambiguous /
    unlinked), sessions before tool_enabled_date, missing proficiency, orphan records
+   - Currently removed: the Operational Impact (4) and Data Quality (6) page files
+     were deleted and their tabs dropped; their metrics functions, SQL views and
+     tests remain so they can come back. Their old URLs show "This page isn't
+     available." (app/views/unavailable.py). Menu: Overview, Agents & Teams,
+     Languages, then the account / User management menu. The Overview title sits
+     on a full-width drawn banner (SVG background, ui.title_row).
 7. **Feedback**: form for dashboard users to suggest improvements (see below)
 
 ### Date filter and global filters
@@ -228,7 +234,7 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
 - Break-glass admin in st.secrets [auth.admin] (bcrypt hash from
   scripts/hash_password.py); works even if the sheet is unavailable.
   [auth] session_timeout_minutes ends sessions.
-- Roles: admin (everything + User management), supervisor (no Data Quality or
+- Roles: admin (everything + User management), supervisor (no
   User management; all data limited to their team by ui.scoped() inside ui.q),
   viewer (Overview adoption donut and its CSV only). Pages a role can't use
   are hidden from the menu and show "You don't have access to this page."

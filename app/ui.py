@@ -386,35 +386,34 @@ def _describe(values, everything):
     return ", ".join(values) or "none"
 
 
-HEADER_ROW_CSS = """
+BANNER_CSS = """
 <style>
-/* The art fills the right column (as wide as the column, at most 250px tall), so it
-   grows with the screen but never reaches into the centered title's column. */
-.st-key-header_row .page-art { display: flex; justify-content: flex-end; }
-.st-key-header_row .page-art img { width: 100%; height: auto; max-height: 250px;
-  object-fit: contain; object-position: right center;
-  filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.18)); }
-@media (max-width: 640px) {   /* small under the title; the empty spacer takes no room */
-  .st-key-header_row [data-testid="stColumn"]:first-child { display: none; }
-  .st-key-header_row .page-art { justify-content: center; }
-  .st-key-header_row .page-art img { width: auto; height: 110px; object-position: center; }
+/* Full-width title banner: background image (an SVG data URI), rounded like the chart
+   cards, with the same shadow and room below it before the first row of cards. */
+.st-key-header_banner {
+  background-image: url("%s"); background-size: cover; background-position: center;
+  border-radius: 14px; min-height: 165px; padding: 0 1rem; box-sizing: border-box;
+  justify-content: center; margin: 0.25rem 0 1.5rem;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.10);
+}
+.st-key-header_banner h1 { color: #1D3557; font-weight: 800; text-align: center; }
+@media (max-width: 640px) {
+  .st-key-header_banner { min-height: 110px; margin-bottom: 1rem; }
+  .st-key-header_banner h1 { font-size: 1.75rem; line-height: 1.2; }
 }
 </style>
 """
 
 
-def title_row(title, art=None, centered=True):
-    """Page title; with art (HTML), a header row with the title centered and the art
-    on the right (stacking under the title on a phone)."""
-    if not art:
+def title_row(title, banner=None, centered=True):
+    """Page title; with banner (an image URL, e.g. an SVG data URI), the title sits
+    centered on a full-width rounded banner."""
+    if not banner:
         st.title(title, anchor=False, text_alignment="center" if centered else "left")
         return
-    st.html(HEADER_ROW_CSS)
-    with st.container(key="header_row"):
-        _, mid, right = st.columns([1, 2, 1], vertical_alignment="center")
-        mid.title(title, anchor=False, text_alignment="center")
-        with right:
-            st.html(art)
+    st.html(BANNER_CSS % banner)
+    with st.container(key="header_banner"):
+        st.title(title, anchor=False, text_alignment="center")
 
 
 # --- Overview date range -------------------------------------------------------------
@@ -457,11 +456,10 @@ def overview_filters() -> Filters:
 
 
 def page_header(title, subtitle=None, require_data=True, centered=False,
-                show_filters=True, art=None) -> Filters:
-    """Title (with optional decorative art (HTML) on the right of a header row),
-    active filter summary (unless show_filters is False), and stops the page if
+                show_filters=True) -> Filters:
+    """Title, active filter summary (unless show_filters is False), and stops the page if
     filters are invalid or return no eligible calls. Returns the active Filters."""
-    title_row(title, art, centered)
+    title_row(title, centered=centered)
     f = st.session_state.filters
     if show_filters:
         opts = options()
