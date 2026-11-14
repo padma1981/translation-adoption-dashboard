@@ -14,7 +14,7 @@ Sign-in is required; what you see depends on your role.
 |---|---|
 | admin | Every page, all teams, all CSV exports, User management |
 | supervisor | Every page except User management, limited to their own team (Team and Supervisor filters are locked) |
-| viewer | Overview adoption donut and its summary CSV only |
+| viewer | The full Overview (aggregate figures only) |
 
 ## Run locally
 

@@ -377,15 +377,54 @@ def test_supervisor_cannot_open_user_management(page):
     assert not at.get("plotly_chart") and not at.get("download_button")
 
 
-def test_viewer_sees_only_the_overview_donut():
+OVERVIEW_CARDS = ["Adoption Percentage", "Adoption by Month", "Calls vs Tool Use by Language",
+                  "Handle Time by Support Type", "Agent Time Saved (FTE)",
+                  "Interpreter Fees Saved", "Interpreter Spend"]
+
+
+def overview_csvs(monkeypatch, session):
+    """Run the Overview as `session`; return its cards, chart count and {file name: CSV text}."""
+    import streamlit as st
+    csvs, original = {}, st.download_button
+
+    def spy(label, data, file_name=None, *args, **kwargs):
+        csvs[file_name] = data
+        return original(label, data, file_name, *args, **kwargs)
+    monkeypatch.setattr(st, "download_button", spy)
+    at = signed_in(new_app(), session).run()
+    assert not at.exception, at.exception
+    return at, csvs
+
+
+def test_viewer_sees_the_whole_overview_like_an_admin(monkeypatch):
+    _, admin_csvs = overview_csvs(monkeypatch, ADMIN_SESSION)
+    make_user("vic", role="viewer", team="")
+    at, csvs = overview_csvs(monkeypatch, session_of("vic"))
+    assert [h.value for h in at.subheader] == OVERVIEW_CARDS
+    assert len(at.get("plotly_chart")) == 6   # every card but the language table has a chart
+    assert [d.proto.label for d in at.get("download_button")] == ["Download CSV"] * 7
+    assert csvs == admin_csvs   # same CSVs as an admin, all teams
+
+
+def test_overview_csvs_hold_no_agent_or_call_ids(monkeypatch):
+    """Viewers get every Overview CSV, so none may name an agent or carry an agent or call ID."""
+    import pandas as pd
+    _, csvs = overview_csvs(monkeypatch, ADMIN_SESSION)
+    assert len(csvs) == 7
+    agents = pd.read_parquet("data/raw/dim_agent.parquet")
+    calls = pd.read_parquet("data/raw/fact_call.parquet", columns=["call_id"])
+    for name, text in csvs.items():
+        header = text.splitlines()[0].split(",")
+        assert not {"agent_id", "agent_name", "call_id"} & set(header), name
+        assert not any(n in text for n in agents["agent_name"]), name
+        assert not any(a in text for a in agents["agent_id"]), name
+        assert not any(c in text for c in calls["call_id"].head(2000)), name
+
+
+def test_viewer_cannot_open_other_pages():
     make_user("vic", role="viewer", team="")
     at = signed_in(new_app(), session_of("vic")).run()
     assert not at.exception, at.exception
-    assert [h.value for h in at.subheader] == ["Adoption Percentage"]   # no Trends
-    assert len(at.get("plotly_chart")) == 1
-    downloads = at.get("download_button")
-    assert len(downloads) == 1 and downloads[0].proto.label == "Download CSV"
-    assert not [m for m in at.markdown if "missed calls" in m.value]
     for page in DATA_PAGES[1:] + [UM]:
         at.switch_page(page).run()
         assert errors(at) == ["You don't have access to this page."], page

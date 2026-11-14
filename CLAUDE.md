@@ -246,8 +246,10 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
   [auth] session_timeout_minutes ends sessions.
 - Roles: admin (everything + User management), supervisor (no
   User management; all data limited to their team by ui.scoped() inside ui.q),
-  viewer (Overview adoption donut and its CSV only). Pages a role can't use
-  are hidden from the menu and show "You don't have access to this page."
+  and viewer: the full Overview (aggregate figures only). Viewers never see agent
+  names or call-level exports and can't open Agents & Teams, Languages or User
+  management. Pages a role can't use are hidden from the menu and show
+  "You don't have access to this page."
 
 ## Deployment (Streamlit Community Cloud)
 The app must be hosted in the cloud so it can be demoed from any device.

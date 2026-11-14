@@ -513,7 +513,8 @@ def overview():
     Rows: adoption donut | adoption by month; language table | handle time by support
     type; agent time saved (FTE) | interpreter fees saved; interpreter spend (full width).
     Each card has a CSV download. No-support calls are
-    left out of every Overview number. Viewers see only the donut and its CSV.
+    left out of every Overview number. Viewers see the whole Overview: it holds aggregate
+    figures only (no agent names, agent IDs or call IDs).
     On a phone the columns stack in reading order."""
     ui.title_row("Translation Tool Adoption", banner=True,
                  subtitle="Spanish, Portuguese, Mandarin and Vietnamese calls")
@@ -530,9 +531,6 @@ def overview():
         top_left, top_right = st.columns(2, gap="large")
         with top_left:
             adoption_section(f, split, no_support)
-        if ui.role() == "viewer":   # no breakdowns for viewers
-            ui.footnote()
-            return
         with top_right:
             month_section(f)
     with st.container(key="row_bottom"):
