@@ -143,27 +143,61 @@ def test_sign_out_clears_session_state():
 
 # --- Request access -------------------------------------------------------------------
 
-def fill_request(at, username="maria", password=GOOD, role="supervisor", team="Echo"):
+def fill_request(at, username="maria", password=GOOD, describes="Supervisor", team="Echo",
+                 send=True):
     for label, value in [("Name", "Maria Lopez"), ("Email", "maria@example.com"),
                          ("Username", username), ("Password", password),
                          ("Confirm password", password)]:
         field(at, label).input(value)
-    next(s for s in at.selectbox if s.label == "Requested role").set_value(role)
-    next(s for s in at.selectbox if s.label.startswith("Team")).set_value(team)
+    at.selectbox(key="rq_describes").set_value(describes)
+    at.selectbox(key="rq_team").set_value(team)
     next(t for t in at.text_area if t.label == "Reason").input("Coach my team")
-    return click(at, "Send request")
+    return click(at, "Send request") if send else at.run()
 
 
-def test_request_access_form_saves_pending_request():
-    at = click(new_app().run(), "Request access")
+def test_sign_in_page_shows_request_access_clearly():
+    at = new_app().run()
+    assert any(c.value == "Don't have an account? Request access below." for c in at.caption)
+    assert any(m.value == "**New here?**" for m in at.markdown)
+    button = at.button(key="request_access_button")
+    assert button.label == "Request access" and button.proto.type == "secondary"
+    assert [b.label for b in at.button if b.label == "Request access"] == ["Request access"]
+    at = click(at, "Request access")
     assert [h.value for h in at.subheader] == ["Request access"]
-    assert next(s for s in at.selectbox if s.label == "Requested role").options == \
-        ["supervisor", "viewer"]   # admin can't be requested
-    fill_request(at)
+    assert at.button(key="back_to_sign_in").label == "Back to sign in"
+    at.button(key="back_to_sign_in").click().run()
+    assert [h.value for h in at.subheader] == ["Sign in"]
+
+
+def test_request_access_supervisor_with_team_saved_as_supervisor():
+    at = click(new_app().run(), "Request access")
+    assert at.selectbox(key="rq_describes").options == ["Supervisor", "Manager or leader", "Other"]
+    assert at.selectbox(key="rq_team").value is None   # optional, blank by default
+    fill_request(at, team="Cascade", send=False)
+    assert "You're requesting supervisor access for Cascade" in [i.value for i in at.info]
+    click(at, "Send request")
     assert not at.exception
     assert [s.value for s in at.success] == ["Request sent. An admin will review it."]
     user = users.get_user("maria")
-    assert user["status"] == "pending" and user["requested_team"] == "Echo"
+    assert (user["status"], user["requested_role"], user["requested_team"]) == (
+        "pending", "supervisor", "Cascade")
+    # The form is cleared for the next request.
+    assert at.text_input(key="rq_name").value == "" and at.text_input(key="rq_username").value == ""
+    assert at.selectbox(key="rq_team").value is None
+    assert at.selectbox(key="rq_describes").value == "Supervisor"
+    assert not at.warning
+
+
+@pytest.mark.parametrize("describes,team", [("Manager or leader", None), ("Other", None),
+                                            ("Supervisor", None), ("Manager or leader", "Echo")])
+def test_request_access_without_supervisor_team_saved_as_viewer(describes, team):
+    at = click(new_app().run(), "Request access")
+    fill_request(at, describes=describes, team=team, send=False)
+    assert "You're requesting Overview access" in [i.value for i in at.info]
+    click(at, "Send request")
+    user = users.get_user("maria")
+    assert (user["requested_role"], user["requested_team"]) == ("viewer", "")
+    assert user["reason"].startswith(f"Describes themselves as: {describes}.")
 
 
 def test_request_access_form_shows_validation_errors():
@@ -404,3 +438,39 @@ def test_supervisor_agents_page_dropdowns_locked():
     import plotly.io as pio
     fig = pio.from_json(at.get("plotly_chart")[0].proto.spec)
     assert len(fig.data) == 1   # no all-teams marker: a supervisor only sees their team
+
+
+# --- Pending-requests banner (admins only) ----------------------------------------------------
+
+def banner_text(at):
+    return [m.value for m in at.markdown if "waiting**" in m.value]
+
+
+def test_admin_banner_only_when_requests_are_pending():
+    at = signed_in(new_app()).run()
+    assert not banner_text(at)                      # nothing pending: no banner
+    make_user("pend1", status="pending")
+    make_user("pend2", status="pending")
+    at.run()
+    assert banner_text(at) == [":material/notifications_active: **2 access requests waiting** ·"]
+    assert at.button(key="approve_requests_button").label == "Approve requests (2)"
+    at.switch_page("views/2_Languages.py").run()    # on every page
+    assert banner_text(at)
+    at.button(key="review_requests").click().run()
+    assert not at.exception, at.exception
+    assert "Pending requests (2)" in [h.value for h in at.subheader]
+    users.approve("pend1", "viewer", "", actor="admin")
+    at.run()
+    assert banner_text(at) == [":material/notifications_active: **1 access request waiting** ·"]
+    users.reject("pend2", actor="admin")
+    at.run()
+    assert not banner_text(at)
+
+
+@pytest.mark.parametrize("role,team", [("supervisor", "Atlas"), ("viewer", "")])
+def test_no_banner_for_supervisors_or_viewers(role, team):
+    make_user("sam", role=role, team=team)
+    make_user("pend1", status="pending")
+    at = signed_in(new_app(), session_of("sam")).run()
+    assert not at.exception, at.exception
+    assert not banner_text(at) and not [b for b in at.button if b.key == "review_requests"]

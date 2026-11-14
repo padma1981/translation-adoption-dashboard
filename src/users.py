@@ -173,6 +173,27 @@ def list_users(status: str | None = None) -> pd.DataFrame:
     return df[PUBLIC_COLUMNS].sort_values("created_at").reset_index(drop=True)
 
 
+# "What best describes you?" on the request form. Only a supervisor who names a team asks
+# for supervisor access; everyone else asks for viewer (Overview only). Admins can still
+# set the final role and team when they approve.
+DESCRIBES = ("Supervisor", "Manager or leader", "Other")
+
+
+def requested_access(describes, team="") -> tuple[str, str]:
+    """(requested_role, requested_team) from the request form's answers."""
+    team = (team or "").strip()
+    if describes == "Supervisor" and team:
+        return "supervisor", team
+    return "viewer", ""
+
+
+def access_summary(role, team="") -> str:
+    """What the requester will ask for, shown before they send the request."""
+    if role == "supervisor":
+        return f"You're requesting supervisor access for {team}"
+    return "You're requesting Overview access"
+
+
 def create_request(name, email, username, password, confirm, requested_role, requested_team="",
                    reason="", reserved=()) -> list[str]:
     """Validate and save an access request as 'pending'. Returns the problems found;

@@ -590,8 +590,10 @@ pages = make_pages(allowed - MENU_HIDDEN)
 page = st.navigation(list(pages.values()), position="top")
 key = next(k for k, p in pages.items() if p is page)
 is_admin = "user_management" in allowed
-auth.account_menu(user, key, pending=pending_count() if is_admin else 0,
-                  user_management=pages["user_management"] if is_admin else None)
+pending = pending_count() if is_admin else 0
+um_page = pages["user_management"] if is_admin else None
+auth.account_menu(user, key, pending=pending, user_management=um_page)
+auth.pending_banner(pending, um_page)   # admins only, while requests are waiting
 if key in RETIRED:
     page.run()
     st.stop()

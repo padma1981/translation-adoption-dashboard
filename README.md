@@ -97,9 +97,12 @@ stored only as bcrypt hashes and are never shown or logged.
 ## How sign-up and approval work
 
 1. A new user clicks **Request access** on the sign-in page and enters name,
-   email, username, password, the role they want (supervisor or viewer; admin
-   can't be requested), their team (required for supervisors) and a reason.
-   The request is saved with status `pending`.
+   email, username, password, "What best describes you?" (Supervisor / Manager
+   or leader / Other), an optional team and a reason. A supervisor who names a
+   team requests supervisor access for that team; everyone else requests viewer
+   (Overview only). Admin can't be requested. The form shows what will be
+   requested before it is sent; the request is saved with status `pending`.
+   Admins see an amber "N access requests waiting · Review" banner on every page.
 2. Until approved they see "Your account is not active yet" when signing in.
 3. An admin opens **User management** from the person menu at the right of the
    top menu bar ("Approve requests (N)" shows the number pending), picks the final role and team, and approves or rejects.

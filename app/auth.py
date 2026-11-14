@@ -133,6 +133,17 @@ def setup_screen():
         "Manage app → Settings → Secrets.", icon="🔐")
 
 
+NEW_HERE_CSS = """
+<style>
+.st-key-new_here { margin-top: 0.75rem; gap: 0.4rem; padding: 0 15px; }  /* = form padding, so the button matches Sign in */
+.st-key-new_here .new-here-rule { width: 30%; margin: 0.25rem auto 0.5rem; border: 0;
+  border-top: 2px solid #CBD5E1; }
+.st-key-new_here [data-testid="stBaseButton-secondary"] { border: 1.5px solid #2a78d6;
+  color: #2a78d6; font-weight: 600; }
+</style>
+"""
+
+
 def sign_in_screen():
     ss = st.session_state
     _, mid, _ = st.columns([1, 1.4, 1])
@@ -141,6 +152,7 @@ def sign_in_screen():
             request_access_form()
             return
         _heading("Sign in")
+        st.caption("Don't have an account? Request access below.", text_alignment="center")
         if notice := ss.pop("_auth_notice", None):
             st.info(notice)
         locked_for = ss.get("_locked_until", 0) - time.time()
@@ -155,9 +167,14 @@ def sign_in_screen():
             submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
         if submitted:
             _try_sign_in(username, password)
-        if st.button("Request access", type="tertiary", key="request_access_link"):
-            ss._auth_view = "request"
-            st.rerun()
+        st.html(NEW_HERE_CSS)
+        with st.container(key="new_here"):
+            st.markdown("<hr class='new-here-rule'>", unsafe_allow_html=True)
+            st.markdown("**New here?**", text_alignment="center")
+            if st.button("Request access", type="secondary", width="stretch",
+                         key="request_access_button", icon=":material/person_add:"):
+                ss._auth_view = "request"
+                st.rerun()
 
 
 def _try_sign_in(username, password):
@@ -184,36 +201,52 @@ def _try_sign_in(username, password):
         st.rerun()
 
 
+# Request form widgets and their empty values. After a request is sent they are reset
+# before the widgets are drawn (setting session_state also resets the browser's copy).
+REQUEST_DEFAULTS = {"rq_name": "", "rq_email": "", "rq_username": "", "rq_password": "",
+                    "rq_confirm": "", "rq_describes": users.DESCRIBES[0], "rq_team": None,
+                    "rq_reason": ""}
+
+
 def request_access_form():
+    """Access request: no st.form, so the requested access updates as the answers change.
+    The role comes from "What best describes you?" and the optional team
+    (users.requested_access); an admin sets the final role and team on approval."""
     ss = st.session_state
     _heading("Request access")
-    if st.button("← Back to sign in", type="tertiary", key="back_to_sign_in"):
+    if st.button("Back to sign in", key="back_to_sign_in", icon=":material/arrow_back:"):
         ss._auth_view = "sign_in"
         st.rerun()
     if ss.pop("_request_sent", False):
         st.success("Request sent. An admin will review it.")
+        ss.update(REQUEST_DEFAULTS)   # clear the form
     if ss.get("_requests_sent", 0) >= MAX_REQUESTS:
         st.info(f"You've sent {MAX_REQUESTS} requests in this session. An admin will review them.")
         return
     teams = ui.options()["teams"]
-    with st.form("request_access"):
-        name = st.text_input("Name")
-        email = st.text_input("Email")
-        username = st.text_input("Username", autocomplete="username")
+    with st.container(border=True, key="request_form"):
+        name = st.text_input("Name", key="rq_name")
+        email = st.text_input("Email", key="rq_email")
+        username = st.text_input("Username", autocomplete="username", key="rq_username")
         password = st.text_input("Password", type="password", autocomplete="new-password",
+                                 key="rq_password",
                                  help=f"At least {users.MIN_PASSWORD_LEN} characters, with letters "
                                       "and numbers.")
-        confirm = st.text_input("Confirm password", type="password", autocomplete="new-password")
-        role = st.selectbox("Requested role", users.REQUESTABLE_ROLES,
-                            help="Supervisors see their own team; viewers see the Overview only.")
-        team = st.selectbox("Team (required for supervisors)", teams, index=None,
-                            placeholder="Choose your team")
-        reason = st.text_area("Reason", placeholder="Why do you need access?")
-        submitted = st.form_submit_button("Send request", type="primary", width="stretch")
+        confirm = st.text_input("Confirm password", type="password", autocomplete="new-password",
+                                key="rq_confirm")
+        describes = st.selectbox("What best describes you?", users.DESCRIBES, key="rq_describes")
+        team = st.selectbox("Team (optional)", teams, index=None, placeholder="No specific team",
+                            key="rq_team")
+        st.caption("Leave Team blank if you don't manage a specific team.")
+        reason = st.text_area("Reason", placeholder="Why do you need access?", key="rq_reason")
+        role, req_team = users.requested_access(describes, team)
+        st.info(users.access_summary(role, req_team), icon=":material/badge:")
+        submitted = st.button("Send request", type="primary", width="stretch", key="send_request")
     if submitted:
+        note = f"Describes themselves as: {describes}." + (f" {reason.strip()}" if reason.strip() else "")
         try:
             problems = users.create_request(name, email, username, password, confirm, role,
-                                            team or "", reason,
+                                            req_team, note,
                                             reserved=[config()["admin"]["username"]])
         except Exception:
             problems = ["Requests can't be saved right now. Try again later."]
@@ -331,3 +364,27 @@ def account_menu(user, page_key, pending=0, user_management=None):
                     if st.button("Manage users", key="manage_users_button", type="tertiary",
                                  icon=":material/manage_accounts:"):
                         st.switch_page(user_management)
+
+
+PENDING_BANNER_CSS = """
+<style>
+.st-key-pending_banner { background: #FEF3C7; border: 1px solid #F59E0B; border-radius: 10px;
+  padding: 0.35rem 0.9rem; margin-bottom: 0.75rem; }
+.st-key-pending_banner [data-testid="stMarkdownContainer"] p { margin: 0; color: #78350F; }
+.st-key-pending_banner button p { font-weight: 700; color: #92400E; text-decoration: underline; }
+</style>
+"""
+
+
+def pending_banner(pending, user_management):
+    """Admins only: a calm amber banner at the top of every page while access requests are
+    waiting, with Review opening User management (pending requests are at its top)."""
+    if not pending or user_management is None:
+        return
+    st.html(PENDING_BANNER_CSS)
+    noun = "access request" if pending == 1 else "access requests"
+    with st.container(horizontal=True, vertical_alignment="center", key="pending_banner"):
+        st.markdown(f":material/notifications_active: **{pending} {noun} waiting** ·",
+                    width="content")
+        if st.button("Review", type="tertiary", key="review_requests"):
+            st.switch_page(user_management)

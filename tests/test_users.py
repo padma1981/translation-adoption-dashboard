@@ -153,3 +153,21 @@ def test_break_glass_admin_works_when_store_unavailable(monkeypatch):
     assert users.authenticate("admin", "Wrong123456", ADMIN) == (None, "incorrect")
     with pytest.raises(ConnectionError):   # other users need the store
         users.authenticate("maria", GOOD, ADMIN)
+
+
+@pytest.mark.parametrize("describes,team,expected", [
+    ("Supervisor", "Cascade", ("supervisor", "Cascade")),
+    ("Supervisor", "", ("viewer", "")),            # a supervisor who leaves Team blank
+    ("Supervisor", None, ("viewer", "")),
+    ("Manager or leader", "Echo", ("viewer", "")),
+    ("Manager or leader", "", ("viewer", "")),
+    ("Other", "", ("viewer", "")),
+])
+def test_requested_access_from_answers(describes, team, expected):
+    assert users.requested_access(describes, team) == expected
+
+
+def test_access_summary():
+    assert users.access_summary("viewer") == "You're requesting Overview access"
+    assert users.access_summary("supervisor", "Cascade") == \
+        "You're requesting supervisor access for Cascade"
