@@ -5,8 +5,9 @@ tool for Spanish, Portuguese, Mandarin and Vietnamese callers. **All data is
 synthetic**; there is no real customer or employee data in this repo.
 
 Pages: Overview (executive view: adoption donut, adoption by month, calls vs tool
-use by language, handle time by support type, agent time saved in FTE), Agents &
-Teams, Languages, Operational Impact, Cost, Data Quality and (admins only) User
+use by language, handle time by support type, agent time saved in FTE, interpreter
+fees saved, interpreter spend), Agents & Teams, Languages, Operational Impact,
+Data Quality and (admins only) User
 management, opened from the User management menu at the right of the top menu bar.
 Sign-in is required; what you see depends on your role.
 

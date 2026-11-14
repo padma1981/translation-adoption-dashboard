@@ -393,6 +393,49 @@ def test_agent_time_saved_needs_both_paths(aht_con):
     assert df["tool_calls"] == 3 and df["hours_saved"] == 0 and df["fte_saved"] == 0
 
 
+def test_interpreter_fees_saved_per_language(aht_con):
+    """Interpreter cost per call: Spanish 20 min x $1.75 = $35, Mandarin 35 min = $61.25.
+    Tool calls: Spanish 2, Mandarin 1 -> 2 x 35 + 1 x 61.25 = $131.25."""
+    assert cfg.INTERPRETER_COST_PER_MIN == 1.75
+    df = m.interpreter_fees_saved("2026-06-01", "2026-06-30", con=aht_con).iloc[0]
+    assert df["tool_calls"] == 3
+    assert df["fees_saved_usd"] == pytest.approx(131.25)
+    assert df["avg_cost_per_interpreter_call"] == pytest.approx(131.25 / 3)
+    langs = m.interpreter_fees_saved("2026-06-01", "2026-06-30", by_language=True,
+                                     con=aht_con).set_index("language")
+    assert langs.index.tolist() == cfg.IN_SCOPE_LANGUAGES
+    assert langs["fees_saved_usd"].to_dict() == pytest.approx(
+        {"Spanish": 70.0, "Portuguese": 0.0, "Mandarin": 61.25, "Vietnamese": 0.0})
+    assert langs.loc["Mandarin", "avg_cost_per_interpreter_call"] == pytest.approx(61.25)
+    assert np.isnan(langs.loc["Vietnamese", "avg_cost_per_interpreter_call"])
+
+
+def test_interpreter_fees_saved_by_month_and_language(aht_con):
+    df = m.interpreter_fees_saved("2026-05-01", "2026-07-31", grain="month", con=aht_con)
+    assert [str(d) for d in df["month_start"]] == ["2026-05-01", "2026-06-01", "2026-07-01"]
+    assert df["fees_saved_usd"].tolist() == pytest.approx([0, 131.25, 0])
+    grid = m.interpreter_fees_saved("2026-05-01", "2026-07-31", grain="month", by_language=True,
+                                    languages=["Spanish", "Mandarin"], con=aht_con)
+    assert len(grid) == 6 and grid["fees_saved_usd"].sum() == pytest.approx(131.25)
+    # The interpreter calls are on 06-11; a range without them has no cost to apply.
+    none = m.interpreter_fees_saved("2026-06-10", "2026-06-10", con=aht_con).iloc[0]
+    assert none["tool_calls"] == 3 and none["fees_saved_usd"] == 0
+
+
+def test_interpreter_spend_by_month():
+    calls = AHT_CALLS + [call("OFF_I", "OFF", "Spanish", "2026-06-12 09:00")]
+    con = m.connect(tables=build_tables(calls, AHT_SESSIONS,
+                                        AHT_INTERP + [interpreter("I_OFF", "OFF_I", 10)]))
+    df = m.interpreter_spend_by_month("2026-05-15", "2026-06-30", con=con)
+    assert [str(d) for d in df["month_start"]] == ["2026-05-01", "2026-06-01"]
+    june = df.iloc[1]
+    assert june["interpreter_spend_usd_not_enabled"] == pytest.approx(17.5)       # OFF: no tool
+    assert june["interpreter_spend_usd_tool_available"] == pytest.approx(96.25)   # 35 + 61.25
+    assert june["interpreter_spend_usd"] == pytest.approx(113.75)
+    assert (june["interpreter_minutes"], june["interpreter_calls"]) == (65, 3)
+    assert df.iloc[0]["interpreter_spend_usd"] == 0
+
+
 def test_language_tool_use_table():
     con = m.connect(tables=build_tables(MISSED_CALLS, RATE_SESSIONS, MISSED_INTERP))
     df = m.language_tool_use(con=con).set_index("language")

@@ -55,15 +55,18 @@ ROUTING_COLORS = {"Native agent": "#a3a29b", "Overflow to non-native": "#6250d6"
 
 # --- Shared Plotly template ----------------------------------------------------
 # Every chart text is bold: tick labels, axis titles, data labels, legend, hover
-# labels and annotations. Built on Streamlit's default template (colorway etc.),
+# labels and annotations; axis tick labels and titles are also black. Built on
+# Streamlit's default template (colorway etc.),
 # registered as the default so every new figure on every page gets it; show()
 # also sets it explicitly.
 BOLD = dict(weight="bold")
+AXIS_TEXT = dict(weight="bold", color="#000000")   # axis tick labels and titles
 PLOTLY_TEMPLATE = go.layout.Template(pio.templates["streamlit" if "streamlit" in pio.templates
                                                    else "plotly"])
 PLOTLY_TEMPLATE.layout.update(
     font=BOLD, hoverlabel=dict(font=BOLD), legend=dict(font=BOLD, title_font=BOLD),
-    xaxis=dict(tickfont=BOLD, title_font=BOLD), yaxis=dict(tickfont=BOLD, title_font=BOLD),
+    xaxis=dict(tickfont=AXIS_TEXT, title_font=AXIS_TEXT),
+    yaxis=dict(tickfont=AXIS_TEXT, title_font=AXIS_TEXT),
     annotationdefaults=dict(font=BOLD))
 for _trace, _fonts in (("bar", ("textfont", "insidetextfont", "outsidetextfont")),
                        ("pie", ("textfont", "insidetextfont", "outsidetextfont")),
@@ -385,13 +388,16 @@ def _describe(values, everything):
 
 HEADER_ROW_CSS = """
 <style>
+/* The art fills the right column (as wide as the column, at most 250px tall), so it
+   grows with the screen but never reaches into the centered title's column. */
 .st-key-header_row .page-art { display: flex; justify-content: flex-end; }
-.st-key-header_row .page-art img { height: 165px; width: auto; max-width: 100%;
+.st-key-header_row .page-art img { width: 100%; height: auto; max-height: 250px;
+  object-fit: contain; object-position: right center;
   filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.18)); }
 @media (max-width: 640px) {   /* small under the title; the empty spacer takes no room */
   .st-key-header_row [data-testid="stColumn"]:first-child { display: none; }
   .st-key-header_row .page-art { justify-content: center; }
-  .st-key-header_row .page-art img { height: 90px; }
+  .st-key-header_row .page-art img { width: auto; height: 110px; object-position: center; }
 }
 </style>
 """
@@ -432,8 +438,8 @@ def _overview_dates_changed():
 
 
 def overview_filters() -> Filters:
-    """Draw the Overview's right-aligned date-range picker (default: the full data range)
-    and return Filters for those dates with every team, supervisor and language."""
+    """Draw the Overview's date-range picker (left, above the cards; default: the full
+    data range) and return Filters for those dates with every team, supervisor and language."""
     opts, ss = options(), st.session_state
     lo, hi = opts["min_date"], opts["max_date"]
     start, end = ss.get("ov_start"), ss.get("ov_end")
@@ -442,7 +448,7 @@ def overview_filters() -> Filters:
     if "_w_ov_dates" not in ss:
         ss._w_ov_dates = (ss.ov_start, ss.ov_end)
     st.html(OVERVIEW_DATES_CSS)
-    with st.container(horizontal=True, horizontal_alignment="right", key="ov_date_bar"):
+    with st.container(horizontal=True, horizontal_alignment="left", key="ov_date_bar"):
         st.date_input("Date range", key="_w_ov_dates", min_value=lo, max_value=hi,
                       format="YYYY-MM-DD", on_change=_overview_dates_changed, width=260,
                       help="The Overview covers all teams, supervisors and languages. "
@@ -501,6 +507,10 @@ def money(x):
     return "—" if pd.isna(x) else f"${x:,.0f}"
 
 
+def money2(x):
+    return "—" if pd.isna(x) else f"${x:,.2f}"
+
+
 def num(x):
     return "—" if pd.isna(x) else f"{x:,.0f}"
 
@@ -540,10 +550,18 @@ def mark_dates(fig, rows, label_col, date_col, start=None, end=None):
     return fig
 
 
+def axis_text(fig):
+    """Bold black axis tick labels and titles. Streamlit's chart theme recolors axis text
+    set only in the template, so the color is also set on the figure itself."""
+    fig.update_xaxes(tickfont=AXIS_TEXT, title_font=AXIS_TEXT)
+    fig.update_yaxes(tickfont=AXIS_TEXT, title_font=AXIS_TEXT)
+    return fig
+
+
 def show(fig, width="stretch"):
     fig.update_layout(template=PLOTLY_TEMPLATE, paper_bgcolor="rgba(0,0,0,0)",
                       plot_bgcolor="rgba(0,0,0,0)")
-    st.plotly_chart(fig, width=width, config={"displayModeBar": False})
+    st.plotly_chart(axis_text(fig), width=width, config={"displayModeBar": False})
 
 
 def path_label(df, col="handling_path"):

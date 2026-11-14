@@ -491,6 +491,83 @@ def agent_time_saved(start_date=None, end_date=None, teams=None, supervisors=Non
     return df.drop(columns=["days"])
 
 
+def _month_grid(start, end):
+    return pd.date_range(start.replace(day=1), end, freq="MS").date
+
+
+def interpreter_fees_saved(start_date=None, end_date=None, teams=None, supervisors=None,
+                           languages=None, grain=None, by_language=False, con=None) -> pd.DataFrame:
+    """Interpreter fees the tool saved, assuming each tool call would otherwise have used
+    the interpreter line.
+
+    Per language: tool calls x average interpreter cost per interpreter call (eligible
+    calls with handling_path interpreter_line), the average taken over the whole selected
+    range. A language with no interpreter calls in the range saves nothing. No-support
+    calls are excluded. Columns: tool_calls, avg_cost_per_interpreter_call (for a language,
+    that language's average; for a total, fees / tool calls), fees_saved_usd.
+    One row for the range; with grain="month" every month in the range; with
+    by_language a row per selected in-scope language (both: the full month x language grid)."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    start, end = _date_bounds(start_date, end_date, con)
+    where, params = _where(*f, date_col="call_date", lang_col="caller_language")
+    calls = (con or get_connection()).execute(f"""
+        select cast(date_trunc('month', call_date) as date) as month_start,
+               caller_language as language,
+               count(*) filter (where handling_path = 'translation_tool') as tool_calls,
+               count(*) filter (where handling_path = 'interpreter_line') as interpreter_calls,
+               coalesce(sum(interpreter_cost_usd) filter (
+                   where handling_path = 'interpreter_line'), 0)::double as interpreter_cost_usd
+        from v_call_enriched where eligible and {where}
+        group by all""", params).df()
+    calls["month_start"] = pd.to_datetime(calls["month_start"]).dt.date
+    per_lang = calls.groupby("language")[["interpreter_calls", "interpreter_cost_usd"]].sum()
+    avg_cost = pd.Series(_ratio(per_lang["interpreter_cost_usd"], per_lang["interpreter_calls"]),
+                         index=per_lang.index)
+
+    langs = [lang for lang in cfg.IN_SCOPE_LANGUAGES if languages is None or lang in languages]
+    keys = (["month_start"] if grain == "month" else []) + (["language"] if by_language else [])
+    if keys:
+        grid = pd.MultiIndex.from_product(
+            ([_month_grid(start, end)] if grain == "month" else []) + ([langs] if by_language else []),
+            names=keys).to_frame(index=False)
+    else:
+        grid = pd.DataFrame(index=[0])
+    tool = calls.assign(fees_saved_usd=calls["tool_calls"]
+                        * calls["language"].map(avg_cost).fillna(0))
+    sums = (tool.groupby(keys)[["tool_calls", "fees_saved_usd"]].sum().reset_index() if keys
+            else tool[["tool_calls", "fees_saved_usd"]].sum().to_frame().T)
+    df = grid.merge(sums, on=keys, how="left") if keys else sums.reset_index(drop=True)
+    df["tool_calls"] = df["tool_calls"].fillna(0).astype("int64")
+    df["fees_saved_usd"] = df["fees_saved_usd"].fillna(0.0).astype(float)
+    if by_language:
+        df["avg_cost_per_interpreter_call"] = df["language"].map(avg_cost).astype(float)
+    else:
+        df["avg_cost_per_interpreter_call"] = _ratio(df["fees_saved_usd"], df["tool_calls"])
+    return df[keys + ["tool_calls", "avg_cost_per_interpreter_call", "fees_saved_usd"]]
+
+
+def interpreter_spend_by_month(start_date=None, end_date=None, teams=None, supervisors=None,
+                               languages=None, con=None) -> pd.DataFrame:
+    """Interpreter calls, minutes and spend per month in the range (every month listed),
+    split into tool not yet enabled (_not_enabled) and tool was available (_tool_available)."""
+    f = (start_date, end_date, teams, supervisors, languages)
+    start, end = _date_bounds(start_date, end_date, con)
+    long = interpreter_spend(*f, grain="month", con=con)
+    long["month_start"] = pd.to_datetime(long["month_start"]).dt.date
+    long["status"] = np.where(long["tool_available"].astype(bool), "tool_available", "not_enabled")
+    measures = ["interpreter_calls", "interpreter_minutes", "interpreter_spend_usd"]
+    wide = long.pivot_table(index="month_start", columns="status", values=measures, aggfunc="sum")
+    wide.columns = [f"{m}_{s}" for m, s in wide.columns]
+    df = pd.DataFrame({"month_start": _month_grid(start, end)}).join(wide, on="month_start")
+    for m in measures:
+        for s in ("not_enabled", "tool_available"):
+            col = f"{m}_{s}"
+            df[col] = df[col].fillna(0) if col in df else 0
+            df[col] = df[col].astype(float if m == "interpreter_spend_usd" else "int64")
+        df[m] = df[f"{m}_not_enabled"] + df[f"{m}_tool_available"]
+    return df
+
+
 # --- Cost --------------------------------------------------------------------
 
 def interpreter_spend(start_date=None, end_date=None, teams=None, supervisors=None, languages=None,

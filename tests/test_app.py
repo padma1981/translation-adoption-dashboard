@@ -91,7 +91,8 @@ def test_overview_adoption_card():
     assert not [c for c in at.caption if c.value.startswith("Teams:")]
     assert [h.value for h in at.subheader] == ["Adoption Percentage", "Adoption by Month",
                                                "Calls vs Tool Use by Language",
-                                               "Handle Time by Support Type", "Agent Time Saved (FTE)"]
+                                               "Handle Time by Support Type", "Agent Time Saved (FTE)",
+                                               "Interpreter Fees Saved", "Interpreter Spend"]
     line = [m for m in at.markdown if "eligible calls adopted the tool" in m.value][0]
     assert line.value == "**8,114** of **12,836** eligible calls adopted the tool"   # no support excluded
     assert line.help.startswith("Eligible calls: Spanish, Portuguese, Mandarin or Vietnamese")
@@ -296,7 +297,7 @@ def test_overview_handle_time_card_full_range():
 def test_overview_fte_card_full_range_and_september():
     import plotly.io as pio
     at = run_page(None)
-    assert overview_markdown(at, "FTE saved") == ["<div class='fte-big'>0.48 <span>FTE saved</span></div>"]
+    assert overview_markdown(at, "FTE saved") == ["<div class='big-number'>0.48 <span>FTE saved</span></div>"]
     assert overview_markdown(at, "hours of agent time saved") == [
         "**501** hours of agent time saved on **8,114** tool calls"]
     sub = [h for h in at.subheader if h.value == "Agent Time Saved (FTE)"][0]
@@ -306,7 +307,7 @@ def test_overview_fte_card_full_range_and_september():
     assert fig.data[0].y[0] == 0   # before rollout: no tool calls
     at.date_input(key="_w_ov_dates").set_value((date(2026, 9, 1), date(2026, 9, 30))).run()
     assert not at.exception, at.exception
-    assert overview_markdown(at, "FTE saved") == ["<div class='fte-big'>0.84 <span>FTE saved</span></div>"]
+    assert overview_markdown(at, "FTE saved") == ["<div class='big-number'>0.84 <span>FTE saved</span></div>"]
     assert overview_markdown(at, "hours of agent time saved")[0].startswith("**143** hours")
     assert (at.session_state["ov_start"], at.session_state["ov_end"]) == (date(2026, 9, 1),
                                                                           date(2026, 9, 30))
@@ -337,3 +338,55 @@ def test_admin_menu_holds_account_and_user_management():
     at.button(key="manage_users_button").click().run()
     assert not at.exception, at.exception
     assert any(t.value == "User management" for t in at.title)
+
+
+def test_overview_fees_saved_card():
+    import plotly.io as pio
+    at = run_page(None)
+    assert overview_markdown(at, " <span>saved</span>") == [
+        "<div class='big-number'>$134,476 <span>saved</span></div>"]
+    assert overview_markdown(at, "per interpreter call") == [
+        "on **8,114** tool calls at about **$16.57** per interpreter call"]
+    sub = [h for h in at.subheader if h.value == "Interpreter Fees Saved"][0]
+    assert "$1.75 per minute" in sub.help and "average interpreter cost" in sub.help
+    fig = pio.from_json(at.get("plotly_chart")[4].proto.spec)
+    assert fig.data[0].marker.color == "#0F9D8A" and fig.data[0].texttemplate == "$%{y:,.0f}"
+    assert sum(fig.data[0].y) == pytest.approx(134475.82, abs=0.01)
+
+
+def test_overview_interpreter_spend_card():
+    import plotly.io as pio
+    at = run_page(None)
+    figures = overview_markdown(at, "spend-figures")[0]
+    for text in ["<b>$184,014</b>total interpreter spend",
+                 "<b>$78,640</b>spend where the tool was available",
+                 "<b>105,151</b>interpreter minutes"]:
+        assert text in figures
+    fig = pio.from_json(at.get("plotly_chart")[5].proto.spec)
+    assert fig.layout.barmode == "stack"
+    assert [t.name for t in fig.data] == ["Tool not yet enabled", "Tool was available"]
+    assert fig.layout.yaxis.tickprefix == "$"
+    at.radio(key="ov_spend_measure").set_value("Minutes").run()
+    assert not at.exception, at.exception
+    fig = pio.from_json(at.get("plotly_chart")[5].proto.spec)
+    assert fig.layout.yaxis.title.text == "Interpreter minutes"
+    assert sum(fig.data[0].y) + sum(fig.data[1].y) == 105151
+
+
+def test_axis_text_is_bold_black_on_every_page():
+    import plotly.io as pio
+    for page in PAGES:
+        at = run_page(page)
+        charts = at.get("plotly_chart")
+        assert charts, page
+        for chart in charts:
+            layout = pio.from_json(chart.proto.spec).layout
+            t = layout.template.layout
+            for axis in (t.xaxis, t.yaxis):
+                assert axis.tickfont.weight == "bold" and axis.tickfont.color == "#000000", page
+                assert axis.title.font.weight == "bold" and axis.title.font.color == "#000000", page
+            # Set on the figure too, since Streamlit's chart theme recolors template-only text.
+            for name in [k for k in layout.to_plotly_json() if k.startswith(("xaxis", "yaxis"))]:
+                axis = layout[name]
+                assert axis.tickfont.color == "#000000" and axis.tickfont.weight == "bold", (page, name)
+                assert axis.title.font.color == "#000000", (page, name)

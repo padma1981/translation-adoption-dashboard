@@ -161,8 +161,14 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
      Adoption Percentage | Adoption by Month; Calls vs Tool Use by Language |
      Handle Time by Support Type (native / tool / interpreter AHT); Agent Time
      Saved (FTE) = per language tool calls x (interpreter AHT - tool AHT), summed,
-     / (config.FTE_HOURS_PER_WEEK x weeks in range). Trends (repeat non-users) was
-     removed from the Overview; its metrics functions remain for another page.
+     / (config.FTE_HOURS_PER_WEEK x weeks in range) | Interpreter Fees Saved = per
+     language tool calls x average interpreter cost per interpreter call; then a
+     full-width Interpreter Spend card (monthly, tool not yet enabled vs tool was
+     available). Trends (repeat non-users) was removed from the Overview; its
+     metrics functions remain for another page. The Cost page is not in the menu
+     (its content is on the Overview; the page and its metrics remain).
+   - Shared Plotly template: all chart text bold; axis tick labels and titles
+     bold black (ui.axis_text also sets them on each figure).
 2. **Agents & Teams**: adoption by team, supervisor, site; agent leaderboard and
    low adopters; ramp curve by days since each agent's tool_enabled_date;
    footnote that team history isn't modeled (current team is used)
