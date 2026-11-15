@@ -14,7 +14,13 @@ ADMIN = {"username": "admin", "name": "Test Admin",
          # 4 rounds keeps tests fast; checkpw reads the cost from the hash
          "password_hash": bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt(4)).decode()}
 AUTH = {"session_timeout_minutes": 480, "admin": ADMIN}
-ADMIN_SESSION = {"username": "admin", "name": "Test Admin", "role": "admin", "team": "",
+DEMO_PASSWORD = "Recruiter2026"
+DEMO = {"username": "demo", "name": "Demo user", "show_demo_button": False,
+        "password_hash": bcrypt.hashpw(DEMO_PASSWORD.encode(), bcrypt.gensalt(4)).decode()}
+AUTH_WITH_DEMO = {**AUTH, "demo": DEMO}
+DEMO_SESSION = {"username": "demo", "name": "Demo user", "role": "demo", "team": "",
+                "must_change_password": False, "break_glass": False, "demo": True}
+ADMIN_SESSION ={"username": "admin", "name": "Test Admin", "role": "admin", "team": "",
                  "must_change_password": False, "break_glass": True}
 
 

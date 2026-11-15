@@ -24,6 +24,8 @@ PAGE_ACCESS = {
     "admin": {"overview", "agents", "languages", "cost", "user_management"},
     "supervisor": {"overview", "agents", "languages", "cost"},
     "viewer": {"overview"},
+    # Shared recruiter demo account from secrets [auth.demo]: the data pages for all teams.
+    "demo": {"overview", "agents", "languages"},
 }
 DENIED = "You don't have access to this page."
 INCORRECT = "Incorrect username or password"
@@ -43,7 +45,20 @@ def config() -> dict | None:
     if not admin.get("username") or not admin.get("password_hash"):
         return None
     return {"timeout_min": float(auth.get("session_timeout_minutes", DEFAULT_TIMEOUT_MIN)),
-            "admin": admin}
+            "admin": admin, "demo": demo_config(auth)}
+
+
+def demo_config(auth) -> dict | None:
+    """[auth.demo] (username, name, password_hash, show_demo_button), or None when it is
+    missing or incomplete; then nothing about the demo account appears anywhere."""
+    try:
+        demo = dict(auth["demo"])
+    except Exception:
+        return None
+    if not demo.get("username") or not demo.get("password_hash"):
+        return None
+    demo["show_demo_button"] = str(demo.get("show_demo_button", False)).strip().lower() == "true"
+    return demo
 
 
 def allowed_pages(user) -> set:
@@ -78,6 +93,11 @@ def current_user(cfg) -> dict | None:
     if now - ss.get("signed_in_at", 0) > cfg["timeout_min"] * 60:
         sign_out("Your session expired. Please sign in again.")
         return None
+    if user.get("role") == "demo":   # lives in secrets: ends if [auth.demo] is removed
+        if cfg["demo"] is None:
+            sign_out(NOT_ACTIVE)
+            return None
+        return user
     if not user.get("break_glass") and now - ss.get("_user_checked_at", 0) > USER_REFRESH_SEC:
         try:
             record = users.get_user(user["username"])
@@ -103,7 +123,8 @@ def gate(make_pages) -> dict:
         user = current_user(cfg)
         if user is None:
             screen = sign_in_screen
-        elif user["must_change_password"] or st.session_state.get("_show_change_password"):
+        elif user.get("role") != "demo" and (user["must_change_password"]
+                                             or st.session_state.get("_show_change_password")):
             screen = change_password_screen
         else:
             return user
@@ -144,6 +165,15 @@ NEW_HERE_CSS = """
 """
 
 
+DEMO_BUTTON_CSS = """
+<style>
+.st-key-demo_entry { padding: 0 15px; margin-top: 0.5rem; }
+.st-key-demo_entry [data-testid="stBaseButton-secondary"] { background: #0F766E; border-color: #0F766E;
+  color: #FFFFFF; font-weight: 600; }
+</style>
+"""
+
+
 def sign_in_screen():
     ss = st.session_state
     _, mid, _ = st.columns([1, 1.4, 1])
@@ -167,6 +197,14 @@ def sign_in_screen():
             submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
         if submitted:
             _try_sign_in(username, password)
+        demo = config()["demo"]
+        if demo and demo["show_demo_button"]:
+            st.html(DEMO_BUTTON_CSS)
+            with st.container(key="demo_entry"):
+                if st.button("Explore the demo", type="secondary", width="stretch",
+                             key="explore_demo_button", icon=":material/rocket_launch:"):
+                    sign_in(users.demo_session(demo))
+                    st.rerun()
         st.html(NEW_HERE_CSS)
         with st.container(key="new_here"):
             st.markdown("<hr class='new-here-rule'>", unsafe_allow_html=True)
@@ -180,7 +218,8 @@ def sign_in_screen():
 def _try_sign_in(username, password):
     ss = st.session_state
     try:
-        user, problem = users.authenticate(username, password, config()["admin"])
+        cfg = config()
+        user, problem = users.authenticate(username, password, cfg["admin"], cfg["demo"])
     except Exception:
         st.error("Sign-in is unavailable right now (the user store can't be reached). "
                  "Try again later.")
@@ -247,7 +286,7 @@ def request_access_form():
         try:
             problems = users.create_request(name, email, username, password, confirm, role,
                                             req_team, note,
-                                            reserved=[config()["admin"]["username"]])
+                                            reserved=_reserved_usernames())
         except Exception:
             problems = ["Requests can't be saved right now. Try again later."]
         for p in problems:
@@ -256,6 +295,11 @@ def request_access_form():
             ss._requests_sent = ss.get("_requests_sent", 0) + 1
             ss._request_sent = True
             st.rerun()
+
+
+def _reserved_usernames():
+    cfg = config()
+    return [cfg["admin"]["username"]] + ([cfg["demo"]["username"]] if cfg["demo"] else [])
 
 
 def change_password_screen():
@@ -335,23 +379,49 @@ ACCOUNT_MENU_CSS = f"""
 """
 
 
+# The demo pill sits just left of the account menu: taken out of the menu's flow and
+# placed against its left edge, so the menu keeps its width whatever the user's name.
+DEMO_PILL_CSS = f"""
+<style>
+[data-testid="stToolbar"] {{ padding-right: calc({MENU_SPACE} + 10rem); }}
+.st-key-account_menu > div:has(.demo-pill) {{ position: absolute; right: calc(100% + 0.5rem);
+  top: 50%; transform: translateY(-50%); width: max-content !important; }}
+.demo-pill {{ white-space: nowrap; font-size: 0.78rem; font-weight: 700; color: #0F766E;
+  background: #CCFBF1; border: 1px solid #5EEAD4; border-radius: 999px; padding: 0.15rem 0.6rem; }}
+@media (max-width: 640px) {{
+  [data-testid="stToolbar"] {{ padding-right: 8.5rem; }}
+  .demo-pill .demo-pill-rest {{ display: none; }}
+}}
+</style>
+"""
+
+
 def account_menu(user, page_key, pending=0, user_management=None):
-    """Account menu at the right end of the top menu bar. Everyone gets "Signed in as",
-    Change password and Sign out; admins (user_management = the hidden User management
-    page) also get Approve requests (N) and Manage users, which open that page.
+    """Account menu at the right end of the top menu bar. Everyone gets "Signed in as"
+    and Sign out; everyone but the shared demo account gets Change password; admins
+    (user_management = the hidden User management page) also get Approve requests (N)
+    and Manage users, which open that page. The demo account also gets a
+    "Demo · synthetic data" pill left of the menu.
     The popover is keyed by the current page, so it is closed after a page switch."""
     ss = st.session_state
     if notice := ss.pop("_auth_notice", None):
         st.toast(notice, icon="✅")
     admin = user_management is not None
+    demo = user.get("role") == "demo"
     st.html(ACCOUNT_MENU_CSS)
+    if demo:
+        st.html(DEMO_PILL_CSS)
     with st.container(key="account_menu"):
+        if demo:
+            st.markdown("<span class='demo-pill' title='Shared demo account; all data is synthetic'>"
+                        "Demo<span class='demo-pill-rest'> · synthetic data</span></span>",
+                        unsafe_allow_html=True, width="content")
         with st.popover("User management" if admin else user["name"], icon=":material/person:",
                         width="content", key=f"account_popover_{page_key}"):
             with st.container(key="account_panel"):
                 st.markdown(f"Signed in as **{user['name']}** ({user['role']})")
-                if st.button("Change password", key="change_password_button", type="tertiary",
-                             icon=":material/key:"):
+                if not demo and st.button("Change password", key="change_password_button",
+                                          type="tertiary", icon=":material/key:"):
                     ss._show_change_password = True
                     st.rerun()
                 st.button("Sign out", key="sign_out_button", type="tertiary", on_click=sign_out,

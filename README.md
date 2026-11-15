@@ -15,6 +15,7 @@ Sign-in is required; what you see depends on your role.
 | admin | Every page, all teams, all CSV exports, User management |
 | supervisor | Every page except User management, limited to their own team (Team and Supervisor filters are locked) |
 | viewer | The full Overview (aggregate figures only) |
+| demo | Shared recruiter account (optional, from secrets): Overview, Agents & Teams and Languages for all teams with every CSV download; no User management or Change password; a "Demo · synthetic data" pill shows next to the account menu |
 
 ## Run locally
 
@@ -72,6 +73,32 @@ when the Google Sheet is unavailable.
 
 To change this admin's password, generate a new hash and replace `password_hash`.
 
+### Demo account (optional, for recruiters)
+
+A shared, read-only account so someone can explore the dashboard without
+requesting access. Like the break-glass admin it lives in secrets, so it survives
+restarts and works when the Google Sheet is unavailable. Several people can be
+signed in as demo at the same time.
+
+1. Run `python scripts/hash_password.py`, type the demo password and copy the hash.
+2. Add to `secrets.toml` (next to `[auth.admin]`):
+
+   ```toml
+   [auth.demo]
+   username = "demo"
+   name = "Demo user"
+   password_hash = "$2b$12$...paste the hash..."
+   show_demo_button = false
+   ```
+
+3. Share the username and password. The username is matched case-insensitively;
+   wrong passwords count toward the usual lockout (5 failures, 5 minutes).
+
+Set `show_demo_button = true` to add an **Explore the demo** button to the
+sign-in page that signs in as the demo account without a password (handy for a
+public portfolio link). Remove the whole `[auth.demo]` block to turn the demo off:
+nothing about it appears anywhere, and open demo sessions end.
+
 ### Google Sheets user store
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create (or pick)
@@ -121,8 +148,8 @@ characters with letters and numbers.
 2. At [share.streamlit.io](https://share.streamlit.io/) choose **Create app**,
    pick the repo and branch `main`, and set the main file path to
    `app/streamlit_app.py`.
-3. Paste the contents of your `secrets.toml` (`[auth]`, `[auth.admin]` and
-   `[connections.gsheets]`) into **Manage app → Settings → Secrets** and save.
+3. Paste the contents of your `secrets.toml` (`[auth]`, `[auth.admin]`, the
+   optional `[auth.demo]` and `[connections.gsheets]`) into **Manage app → Settings → Secrets** and save.
    The app restarts with them.
 4. Sign in as the break-glass admin and approve the first requests.
 

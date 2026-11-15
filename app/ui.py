@@ -171,9 +171,9 @@ def role() -> str:
 
 def user_scope():
     """(team, supervisor) the signed-in user is limited to, or None for all teams.
-    Supervisors see only their own team; admins and viewers see all teams."""
+    Supervisors see only their own team; admins, viewers and demo see all teams."""
     user = st.session_state.get("user")
-    if not user or user.get("role") not in ("admin", "supervisor", "viewer"):
+    if not user or user.get("role") not in ("admin", "supervisor", "viewer", "demo"):
         raise PermissionError("No signed-in user.")
     if user["role"] != "supervisor":
         return None

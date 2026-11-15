@@ -250,6 +250,18 @@ tolerance for linking is config.LINK_TOLERANCE_SEC (default 0 = strict only).
   names or call-level exports and can't open Agents & Teams, Languages or User
   management. Pages a role can't use are hidden from the menu and show
   "You don't have access to this page."
+- Optional shared demo account in st.secrets [auth.demo] (username, name,
+  password_hash, show_demo_button); if missing or incomplete, nothing about demo
+  appears anywhere. Role "demo": Overview, Agents & Teams and Languages for all
+  teams (same as admin there, every CSV download; Team and Supervisor filters not
+  locked); no User management, no pending-requests banner, no Change password
+  (menu shows only "Signed in as Demo user (demo)" and Sign out); a
+  "Demo · synthetic data" pill next to the account menu. The username is matched
+  case-insensitively and checked before the user store, like the admin; the
+  failed-login lockout applies; many people can be signed in as demo at once.
+  show_demo_button = true adds an "Explore the demo" button (above "New here?")
+  that signs in as demo without a password. The demo username is reserved for
+  access requests.
 
 ## Deployment (Streamlit Community Cloud)
 The app must be hosted in the cloud so it can be demoed from any device.

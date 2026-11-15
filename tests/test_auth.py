@@ -513,3 +513,127 @@ def test_no_banner_for_supervisors_or_viewers(role, team):
     at = signed_in(new_app(), session_of("sam")).run()
     assert not at.exception, at.exception
     assert not banner_text(at) and not [b for b in at.button if b.key == "review_requests"]
+
+
+# --- Demo account ([auth.demo]) ---------------------------------------------------------
+
+from tests.conftest import AUTH, AUTH_WITH_DEMO, DEMO, DEMO_PASSWORD, DEMO_SESSION  # noqa: E402
+
+
+def demo_app(show_button=False):
+    return new_app({**AUTH_WITH_DEMO, "demo": {**DEMO, "show_demo_button": show_button}})
+
+
+def test_demo_signs_in_with_right_password_only():
+    at = demo_app().run()
+    sign_in(at, "demo", "Wrong123456")
+    assert errors(at) == ["Incorrect username or password"] and not in_app(at)
+    sign_in(at, " DeMo ", DEMO_PASSWORD)   # case-insensitive, like the admin
+    assert not at.exception and in_app(at)
+    assert at.session_state["user"]["role"] == "demo"
+
+
+def test_demo_checked_before_store_and_lockout_kept(monkeypatch):
+    def unavailable(*a, **k):
+        raise ConnectionError("Google Sheets unreachable")
+    monkeypatch.setattr(users, "_read", unavailable)
+    at = demo_app().run()
+    for _ in range(5):
+        sign_in(at, "demo", "Wrong123456")
+    assert any("Too many failed attempts" in e for e in errors(at))
+    assert not at.text_input
+
+
+def test_two_demo_sessions_at_once():
+    a, b = demo_app().run(), demo_app().run()
+    sign_in(a, "demo", DEMO_PASSWORD)
+    sign_in(b, "demo", DEMO_PASSWORD)
+    a.run()
+    assert in_app(a) and in_app(b)
+
+
+def test_demo_sees_data_pages_for_all_teams(monkeypatch):
+    at = signed_in(demo_app(), DEMO_SESSION).run()
+    import ui
+    calls = []
+    original = ui._cached
+
+    def spy(fn_name, filter_args, extra, version):
+        calls.append((fn_name, filter_args[2], filter_args[3]))
+        return original(fn_name, filter_args, extra, version)
+    monkeypatch.setattr(ui, "_cached", spy)
+    for page in [None, "views/1_Agents_and_Teams.py", "views/2_Languages.py"]:
+        calls.clear()
+        if page:
+            at.switch_page(page)
+        at.run()
+        assert not at.exception, (page, at.exception)
+        assert not errors(at), page
+        assert calls, page
+        if page != "views/2_Languages.py":   # Languages has no CSV downloads for anyone
+            assert at.get("download_button"), page
+        assert any(teams is None for _, teams, _ in calls), page   # all teams, not scoped
+    at.switch_page("views/1_Agents_and_Teams.py").run()
+    dropdowns = [at.selectbox(key="_w_ag_team"), at.selectbox(key="_w_ag_supervisor")]
+    assert not any(d.disabled for d in dropdowns)   # Team and Supervisor not locked
+    labels = [d.proto.label for d in at.get("download_button")]
+    assert "Download calls for coaching (CSV)" in labels   # same downloads as an admin
+    fig = at.get("plotly_chart")[0]
+    assert len(__import__("json").loads(fig.proto.spec)["data"]) == 2   # all-teams marker shown
+
+
+def test_demo_page_access():
+    from auth import PAGE_ACCESS
+    assert PAGE_ACCESS["demo"] == {"overview", "agents", "languages"}
+
+
+def test_demo_cannot_open_user_management():
+    at = signed_in(demo_app(), DEMO_SESSION).run()
+    at.switch_page(UM).run()
+    assert not at.exception
+    assert errors(at) == ["You don't have access to this page."]
+
+
+def test_demo_menu_has_no_change_password_or_banner():
+    make_user(status="pending")   # would trigger the admin banner
+    at = signed_in(demo_app(), DEMO_SESSION).run()
+    assert not at.exception, at.exception
+    assert [p.proto.popover.label for p in at.get("popover")] == ["Demo user"]
+    assert any(m.value == "Signed in as **Demo user** (demo)" for m in at.markdown)
+    labels = [b.label for b in at.button]
+    assert "Sign out" in labels and "Change password" not in labels
+    assert not [lbl for lbl in labels if lbl.startswith("Approve requests") or lbl == "Manage users"]
+    assert not [m for m in at.markdown if "waiting**" in m.value]
+    assert any("synthetic data" in m.value and "demo-pill" in m.value for m in at.markdown)
+    at.session_state["_show_change_password"] = True   # even if set, no change-password screen
+    at.run()
+    assert in_app(at)
+
+
+def test_demo_button_only_when_switched_on():
+    at = demo_app(show_button=False).run()
+    assert "Explore the demo" not in [b.label for b in at.button]
+    at = demo_app(show_button=True).run()
+    labels = [b.label for b in at.button]
+    assert labels.index("Explore the demo") < labels.index("Request access")
+    click(at, "Explore the demo")
+    assert not at.exception and in_app(at)
+    assert at.session_state["user"]["role"] == "demo"
+
+
+def test_no_demo_anything_without_auth_demo():
+    at = new_app(AUTH).run()
+    assert "Explore the demo" not in [b.label for b in at.button]
+    sign_in(at, "demo", DEMO_PASSWORD)
+    assert errors(at) == ["Incorrect username or password"]
+    at = signed_in(new_app(AUTH)).run()   # admin: no pill
+    assert not [m for m in at.markdown if "demo-pill" in m.value]
+    at = signed_in(new_app(AUTH), DEMO_SESSION).run()   # a stale demo session is ended
+    assert not in_app(at)
+
+
+def test_demo_username_is_reserved_for_requests():
+    at = demo_app().run()
+    fill_request(click(at, "Request access"), username="Demo")
+    assert "That username is already taken." in errors(at)
+    assert users.list_users().empty

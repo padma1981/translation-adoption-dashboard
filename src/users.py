@@ -306,16 +306,28 @@ def change_password(username, current, new, confirm) -> list[str]:
     return problems
 
 
-def authenticate(username, password, admin=None) -> tuple[dict | None, str | None]:
+def demo_session(demo: dict) -> dict:
+    """Session user for the shared demo account from secrets [auth.demo]."""
+    username = str(demo.get("username", "")).strip().lower()
+    return {"username": username, "name": demo.get("name") or "Demo user", "role": "demo",
+            "team": "", "must_change_password": False, "break_glass": False, "demo": True}
+
+
+def authenticate(username, password, admin=None, demo=None) -> tuple[dict | None, str | None]:
     """Check credentials. Returns (session user, None) or (None, reason) where reason
-    is 'incorrect', 'pending' or 'inactive'. `admin` is the break-glass admin from
-    secrets (username, name, password_hash); it is checked before the store is
-    touched, so it works when the store is down. Other store errors propagate."""
+    is 'incorrect', 'pending' or 'inactive'. `admin` is the break-glass admin and
+    `demo` the shared demo account from secrets (username, name, password_hash);
+    both are matched case-insensitively and checked before the store is touched,
+    so they work when the store is down. Other store errors propagate."""
     username = (username or "").strip().lower()
     if admin and username == str(admin.get("username", "")).strip().lower():
         if check_password(password, admin.get("password_hash", "")):
             return {"username": username, "name": admin.get("name") or username, "role": "admin",
                     "team": "", "must_change_password": False, "break_glass": True}, None
+        return None, "incorrect"
+    if demo and username == str(demo.get("username", "")).strip().lower():
+        if check_password(password, demo.get("password_hash", "")):
+            return demo_session(demo), None
         return None, "incorrect"
     user = _get(username)
     if user is None or not check_password(password, user["password_hash"]):
